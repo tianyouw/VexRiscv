@@ -470,7 +470,7 @@ object BrieyDe2{
       val toplevel = new Briey(BrieyConfig.default.copy(sdramLayout    = IS42x320B.layout,
                                                         sdramTimings   = IS42x320B.timingGrade7,
                                                         onChipRamSize  = 4 kB))
-      HexTools.initRam(toplevel.axi.ram.ram, "src/main/ressource/hex/muraxDemo.hex", 0x80000000l)
+      HexTools.initRam(toplevel.axi.ram.ram, "src/main/ressource/hex/blink.hex", 0x80000000l)
       toplevel
     })
   }
