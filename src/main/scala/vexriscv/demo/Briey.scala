@@ -439,3 +439,39 @@ object BrieyDe0Nano{
     })
   }
 }
+
+//DE2-115
+object BrieyDe2{
+  def main(args: Array[String]) {
+    object IS42x320B {
+      def layout = SdramLayout(
+        bankWidth   = 2,
+        columnWidth = 10,
+        rowWidth    = 13,
+        dataWidth   = 32
+      )
+
+      def timingGrade7 = SdramTimings(
+        bootRefreshCount =   2,
+        tPOW             = 200 us,
+        tREF             =  64 ms,
+        tRC              =  70 ns,
+        tRFC             =  70 ns,
+        tRAS             =  49 ns,
+        tRP              =  20 ns,
+        tRCD             =  20 ns,
+        cMRD             =   2,
+        tWR              =  14 ns,
+        cWR              =   1
+      )
+    }
+    val config = SpinalConfig()
+    config.generateVerilog({
+      val toplevel = new Briey(BrieyConfig.default.copy(sdramLayout    = IS42x320B.layout,
+                                                        sdramTimings   = IS42x320B.timingGrade7,
+                                                        onChipRamSize  = 4 kB))
+      HexTools.initRam(toplevel.axi.ram.ram, "src/main/ressource/hex/muraxDemo.hex", 0x80000000l)
+      toplevel
+    })
+  }
+}
