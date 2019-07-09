@@ -33,7 +33,7 @@ object BrieyConfig{
   def default = {
     val config = BrieyConfig(
       axiFrequency = 50 MHz,
-      onChipRamSize  = 4 kB,
+      onChipRamSize  = 4 KiB,
       sdramLayout = IS42x320D.layout,
       sdramTimings = IS42x320D.timingGrade7,
       uartCtrlConfig = UartCtrlMemoryMappedConfig(
@@ -48,53 +48,61 @@ object BrieyConfig{
         rxFifoDepth = 16
       ),
       cpuPlugins = ArrayBuffer(
-        new PcManagerSimplePlugin(0x80000000l, false),
-        //          new IBusSimplePlugin(
-        //            interfaceKeepData = false,
-        //            catchAccessFault = true
-        //          ),
-        new IBusCachedPlugin(
+//        new PcManagerSimplePlugin(0x80000000l, false),
+        new IBusSimplePlugin(
           resetVector = 0x80000000l,
+          cmdForkOnSecondStage = false,
+          cmdForkPersistence = true,
           prediction = STATIC,
-          config = InstructionCacheConfig(
-            cacheSize = 4096,
-            bytePerLine =32,
-            wayCount = 1,
-            addressWidth = 32,
-            cpuDataWidth = 32,
-            memDataWidth = 32,
-            catchIllegalAccess = true,
-            catchAccessFault = true,
-            asyncTagMemory = false,
-            twoCycleRam = true,
-            twoCycleCache = true
-          )
-          //            askMemoryTranslation = true,
-          //            memoryTranslatorPortConfig = MemoryTranslatorPortConfig(
-          //              portTlbSize = 4
-          //            )
+          catchAccessFault = false,
+          compressedGen = false
         ),
+        new DBusSimplePlugin(
+          catchAddressMisaligned = false,
+          catchAccessFault = false
+        ),
+//        new IBusCachedPlugin(
+//          resetVector = 0x80000000l,
+//          prediction = STATIC,
+//          config = InstructionCacheConfig(
+//            cacheSize = 4096,
+//            bytePerLine =32,
+//            wayCount = 1,
+//            addressWidth = 32,
+//            cpuDataWidth = 32,
+//            memDataWidth = 32,
+//            catchIllegalAccess = true,
+//            catchAccessFault = true,
+//            asyncTagMemory = false,
+//            twoCycleRam = true,
+//            twoCycleCache = true
+//          )
+//          //            askMemoryTranslation = true,
+//          //            memoryTranslatorPortConfig = MemoryTranslatorPortConfig(
+//          //              portTlbSize = 4
+//          //            )
+//        ),
         //                    new DBusSimplePlugin(
         //                      catchAddressMisaligned = true,
         //                      catchAccessFault = true
         //                    ),
-        new DBusCachedPlugin(
-          config = new DataCacheConfig(
-            cacheSize         = 4096,
-            bytePerLine       = 32,
-            wayCount          = 1,
-            addressWidth      = 32,
-            cpuDataWidth      = 32,
-            memDataWidth      = 32,
-            catchAccessError  = true,
-            catchIllegal      = true,
-            catchUnaligned    = true
-          ),
-          memoryTranslatorPortConfig = null
-          //            memoryTranslatorPortConfig = MemoryTranslatorPortConfig(
-          //              portTlbSize = 6
-          //            )
-        ),
+//        new DBusCachedPlugin(
+//          config = new DataCacheConfig(
+//            cacheSize         = 4096,
+//            bytePerLine       = 32,
+//            wayCount          = 1,
+//            addressWidth      = 32,
+//            cpuDataWidth      = 32,
+//            memDataWidth      = 32,
+//            catchAccessError  = true,
+//            catchIllegal      = true,
+//            catchUnaligned    = true
+//          ),
+//          memoryTranslatorPortConfig = null
+//          //            memoryTranslatorPortConfig = MemoryTranslatorPortConfig(
+//          //              portTlbSize = 6
+//          //            )
+//        ),
         new StaticMemoryTranslatorPlugin(
           ioRange      = _(31 downto 28) === 0xF
         ),
