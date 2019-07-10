@@ -48,14 +48,16 @@ object BrieyConfig{
         rxFifoDepth = 16
       ),
       cpuPlugins = ArrayBuffer(
-        new PcManagerSimplePlugin(0x80000000l, false),
+        // new PcManagerSimplePlugin(0x80000000l, false),
         //          new IBusSimplePlugin(
         //            interfaceKeepData = false,
         //            catchAccessFault = true
         //          ),
         new IBusCachedPlugin(
           resetVector = 0x80000000l,
-          prediction = STATIC,
+          prediction = DYNAMIC_TARGET,
+          historyRamSizeLog2 = 8,
+          compressedGen = false,
           config = InstructionCacheConfig(
             cacheSize = 4096,
             bytePerLine =32,
@@ -66,8 +68,8 @@ object BrieyConfig{
             catchIllegalAccess = true,
             catchAccessFault = true,
             asyncTagMemory = false,
-            twoCycleRam = true,
-            twoCycleCache = true
+            twoCycleRam = false,
+            twoCycleCache = false
           )
           //            askMemoryTranslation = true,
           //            memoryTranslatorPortConfig = MemoryTranslatorPortConfig(
@@ -469,9 +471,9 @@ object BrieyDe2{
     config.generateVerilog({
       val toplevel = new Briey(BrieyConfig.default.copy(sdramLayout    = IS42x320B.layout,
                                                         sdramTimings   = IS42x320B.timingGrade7,
-                                                        onChipRamSize  = 4 kB))
-      // HexTools.initRam(toplevel.axi.ram.ram, "src/main/ressource/hex/muraxDemo.hex", 0x80000000l)
-      HexTools.initRam(toplevel.axi.ram.ram, "../VexRiscvSocSoftware/projects/briey/blink/build/blink.hex", 0x80000000l)
+                                                        onChipRamSize  = 32 kB))
+      HexTools.initRam(toplevel.axi.ram.ram, "../VexRiscvSocSoftware/projects/briey/dhrystone/build/dhrystone.hex", 0x80000000l)
+      // HexTools.initRam(toplevel.axi.ram.ram, "../VexRiscvSocSoftware/projects/briey/blink/build/blink.hex", 0x80000000l)
       toplevel
     })
   }
