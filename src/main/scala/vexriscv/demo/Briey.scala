@@ -472,9 +472,10 @@ object BrieyDe2{
       val toplevel = new Briey(BrieyConfig.default.copy(sdramLayout    = IS42x320B.layout,
                                                         sdramTimings   = IS42x320B.timingGrade7,
                                                         onChipRamSize  = 32 kB))
-      HexTools.initRam(toplevel.axi.ram.ram, "src/main/ressource/hex/dhrystone.hex", 0x80000000l)
+      // HexTools.initRam(toplevel.axi.ram.ram, "src/main/ressource/hex/dhrystone.hex", 0x80000000l)
       // HexTools.initRam(toplevel.axi.ram.ram, "../VexRiscvSocSoftware/projects/briey/dhrystone/build/dhrystone.hex", 0x80000000l)
       // HexTools.initRam(toplevel.axi.ram.ram, "../VexRiscvSocSoftware/projects/briey/blink/build/blink.hex", 0x80000000l)
+      HexTools.initRam(toplevel.axi.ram.ram, "../VexRiscvSocSoftware/projects/briey/memtest/build/memtest.hex", 0x80000000l)
       toplevel
     })
   }
