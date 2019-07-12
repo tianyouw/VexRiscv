@@ -34,13 +34,13 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiIdWidth: Int, layout: Sd
   final val treeDepth = 4
   val io = new Bundle {
     val axi = slave(Axi4Shared(axiConfig))
-    // val sdramAxi = master(Axi4Shared(axiConfig))
+    val sdramAxi = master(Axi4Shared(axiConfig))
   }
 
   // val crypto = new CAESARInterface()
   // crypto.connectToCryptoEngineToBus(io.axi)
 
-  // io.axi <> io.sdramAxi
+  io.axi <> io.sdramAxi
 
   // ???
 

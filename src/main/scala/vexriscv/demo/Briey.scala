@@ -320,7 +320,7 @@ class Briey(config: BrieyConfig) extends Component{
         timing = sdramTimings, 
         CAS = 3
       )
-
+      
       var iBusSdram : Axi4ReadOnly = null
       var dBusSdram : Axi4Shared = null
       for(plugin <- core.config.plugins) plugin match{
@@ -351,9 +351,9 @@ class Briey(config: BrieyConfig) extends Component{
     )
 
     axiCrossbar.addConnections(
-      core.iBus       -> List(ram.io.axi /*, sdramCtrl.io.axi*/),
-      core.dBus       -> List(ram.io.axi, /*sdramCtrl.io.axi,*/ apbBridge.io.axi)
-      // vgaCtrl.io.axi  -> List(            sdramCtrl.io.axi)
+      core.iBus       -> List(ram.io.axi, secureAccess.secureAccessCtrl.io.axi),
+      core.dBus       -> List(ram.io.axi, secureAccess.secureAccessCtrl.io.axi, apbBridge.io.axi),
+      vgaCtrl.io.axi  -> List(            secureAccess.secureAccessCtrl.io.axi)
     )
 
 
@@ -391,13 +391,13 @@ class Briey(config: BrieyConfig) extends Component{
       cpu.readRsp               <-< crossbar.readRsp //Data cache directly use read responses without buffering, so pipeline it for FMax
     })
 
-    // TODO: figure out connection to pipeline
-    axiCrossbar.addPipelining(secureAccess.dBusSdram)((crossbar, ctrl) => {
-      crossbar.sharedCmd.halfPipe()  >>  ctrl.sharedCmd
-      crossbar.writeData            >/-> ctrl.writeData
-      crossbar.writeRsp              <<  ctrl.writeRsp
-      crossbar.readRsp               <<  ctrl.readRsp
-    })
+    // TODO: figure out proper connection types for pipeline
+    // axiCrossbar.addPipelining(secureAccess.secureAccessCtrl.io.axi)((crossbar, ctrl) => {
+    //   crossbar.sharedCmd.halfPipe()  >>  ctrl.sharedCmd
+    //   crossbar.writeData            >/-> ctrl.writeData
+    //   crossbar.writeRsp              <<  ctrl.writeRsp
+    //   crossbar.readRsp               <<  ctrl.readRsp
+    // })
 
     axiCrossbar.build()
 
@@ -411,8 +411,8 @@ class Briey(config: BrieyConfig) extends Component{
 
     sdramAxiCrossbar.addConnections(
       secureAccess.iBusSdram -> List(sdramCtrl.io.axi),
-      secureAccess.dBusSdram -> List(sdramCtrl.io.axi),
-      vgaCtrl.io.axi  -> List(            sdramCtrl.io.axi)
+      secureAccess.dBusSdram -> List(sdramCtrl.io.axi)
+      // vgaCtrl.io.axi  -> List(            sdramCtrl.io.axi)
     )
 
     sdramAxiCrossbar.addPipelining(sdramCtrl.io.axi)((crossbar,ctrl) => {
@@ -422,11 +422,11 @@ class Briey(config: BrieyConfig) extends Component{
       crossbar.readRsp               <<  ctrl.readRsp
     })
 
-    // sdramAxiCrossbar.addPipelining(core.dBus)((cpu,crossbar) => {
-    //   cpu.sharedCmd             >>  crossbar.sharedCmd
-    //   cpu.writeData             >>  crossbar.writeData
-    //   cpu.writeRsp              <<  crossbar.writeRsp
-    //   cpu.readRsp               <-< crossbar.readRsp //Data cache directly use read responses without buffering, so pipeline it for FMax
+    // sdramAxiCrossbar.addPipelining(secureAccess.secureAccessCtrl.io.sdramAxi)((ctrl, crossbar) => {
+    //   ctrl.sharedCmd.halfPipe()  >>  crossbar.sharedCmd
+    //   ctrl.writeData            >/-> crossbar.writeData
+    //   ctrl.writeRsp              <<  crossbar.writeRsp
+    //   ctrl.readRsp               <<  crossbar.readRsp
     // })
 
     sdramAxiCrossbar.build()
