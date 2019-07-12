@@ -1,6 +1,8 @@
 package spinal.lib.security
 
 import spinal.core._
+import spinal.lib.bus.amba4.axi.Axi4Shared
+import spinal.lib.memory.sdram.SdramCtrlAxi4SharedContext
 import spinal.lib.{IMasterSlave, master}
 
 /**
@@ -20,12 +22,12 @@ class CAESARInterface() extends BlackBox {
     // Public data ports
     val pdi_data = in Bits(32 bits)
     val pdi_valid = in Bool
-    val pdi_ready = in Bool
+    val pdi_ready = out Bool
 
     // Secret data ports
     val sdi_data = in Bits(32 bits)
     val sdi_valid = in Bool
-    val sdi_ready = in Bool
+    val sdi_ready = out Bool
 
     // Public data ports
     val do_data = out Bits(32 bits)
@@ -35,7 +37,19 @@ class CAESARInterface() extends BlackBox {
 
   noIoPrefix()
   mapClockDomain(clock=io.clk, reset = io.rst)
-
   // TODO: Add Ascon RTL source here
   ???
+
+  def connectToCryptoEngineToBus(axi : Axi4Shared) = new Area {
+    require(axi.config.dataWidth == 32)
+
+    val axiSharedCmd = axi.arw.unburstify
+    val axiCmd = axiSharedCmd.haltWhen(axiSharedCmd.write && !axi.writeData.valid)
+    ???
+//    io.pdi_valid := axiCmd.valid
+//    io.pdi_data := axi.writeData.data & axi.writeData.strb
+//
+//
+//    axiSharedCmd.ready.noBackendCombMerge //Verilator Perf
+  }
 }
