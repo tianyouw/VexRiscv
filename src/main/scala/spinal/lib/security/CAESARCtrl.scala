@@ -12,14 +12,12 @@ import spinal.lib.bus.amba4.axi.{Axi4ArwUnburstified, Axi4Config}
 case class CAESARCtrl(config : Axi4Config) extends Component {
   val io = new Bundle {
     val in_stream = slave Stream(Fragment(Bits(config.dataWidth bits)))
-    val out_stream = master Stream(Bits(config.dataWidth bits))
-
-    val in_last = in Bool()
-    val out_last = out Bool()
+    val out_stream = master Stream(Fragment(Bits(config.dataWidth bits)))
   }
 
+  io.in_stream >/> io.out_stream
 
-  val crypto = new CAESARInterface()
+//  val crypto = new CAESARInterface()
   // TODO: Implement CAESAR spec
   // ???
 }

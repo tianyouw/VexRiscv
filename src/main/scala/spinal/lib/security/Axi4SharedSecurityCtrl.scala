@@ -11,11 +11,10 @@ import spinal.lib.{Fragment, Stream, master, slave}
   */
 
 object Axi4SharedSecurityCtrl {
-  def getAxiConfig(dataWidth: Int, idWidth: Int, layout: SdramLayout): Axi4Config = {
-    val widthFactor = dataWidth / layout.dataWidth
+  def getAxiConfig(dataWidth: Int, addressWidth: Int, idWidth: Int): Axi4Config = {
 
       Axi4Config(
-        addressWidth = layout.byteAddressWidth,
+        addressWidth = addressWidth,
         dataWidth = dataWidth,
         idWidth = idWidth,
         useLock = false,
@@ -28,8 +27,8 @@ object Axi4SharedSecurityCtrl {
 }
 
 
-case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiIdWidth: Int, layout: SdramLayout, timing: SdramTimings, CAS: Int) extends Component {
-  val axiConfig = Axi4SharedSecurityCtrl.getAxiConfig(axiDataWidth, axiIdWidth, layout)
+case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWidth: Int) extends Component {
+  val axiConfig = Axi4SharedSecurityCtrl.getAxiConfig(axiDataWidth, axiAddrWidth, axiIdWidth)
 
   val startAddr = Reg(UInt(axiConfig.addressWidth bits))
   val writeToRam = Reg(Bool())
@@ -41,44 +40,66 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiIdWidth: Int, layout: Sd
     val sdramAxi = master(Axi4Shared(axiConfig))
   }
 
+  val caesarCtrl = CAESARCtrl(axiConfig)
 
   val ioAxiSharedCmd = io.axi.arw.unburstify
   val ioAxiCmd = ioAxiSharedCmd.haltWhen(ioAxiSharedCmd.write && !io.axi.writeData.valid)
+  val writeRsp = cloneOf(io.axi.writeRsp)
 
-  when (ioAxiSharedCmd.isFirst) {
-    writeToRam := ioAxiCmd.write
-  }
+  // Set up sdram AXI
+  io.sdramAxi.sharedCmd.addr := io.axi.sharedCmd.addr + 0x20000000 // Offset to bump into RAM region
+  io.sdramAxi.sharedCmd.valid := io.axi.sharedCmd.valid
+  io.sdramAxi.sharedCmd.write := io.axi.sharedCmd.write
+  io.sdramAxi.sharedCmd.size := io.axi.sharedCmd.size
+  io.sdramAxi.sharedCmd.len  := io.axi.sharedCmd.len
+  io.sdramAxi.sharedCmd.id := io.axi.sharedCmd.id
+  io.sdramAxi.sharedCmd.setBurstINCR()
 
-  val caesarCtrl = CAESARCtrl(axiConfig)
 
-  when (writeToRam) {
+  //Write rsp branch
+  writeRsp.valid := ioAxiCmd.fire && ioAxiCmd.write && ioAxiCmd.last
+  writeRsp.id := ioAxiCmd.id
+  writeRsp.setOKAY()
+  writeRsp >-> io.axi.writeRsp
+
+  // Read rsp branch
+  io.axi.readRsp.id := ioAxiCmd.id
+  io.axi.readRsp.last := caesarCtrl.io.out_stream.last
+  io.axi.readRsp.valid := caesarCtrl.io.out_stream.valid
+  io.axi.readRsp.data := caesarCtrl.io.out_stream.fragment
+  io.axi.readRsp.setOKAY()
+
+  //Readys
+  io.axi.writeData.ready :=  ioAxiSharedCmd.valid && ioAxiSharedCmd.write && ioAxiCmd.ready
+  io.sdramAxi.readRsp.ready := ioAxiSharedCmd.valid && !ioAxiSharedCmd.write && caesarCtrl.io.in_stream.ready
+  io.sdramAxi.writeRsp.ready := True
+  ioAxiCmd.ready      := caesarCtrl.io.in_stream.ready && !(ioAxiCmd.write && !writeRsp.ready) && !(!ioAxiCmd.write && !io.axi.readRsp.ready)
+
+  when (ioAxiSharedCmd.write) {
     caesarCtrl.io.in_stream.valid := ioAxiCmd.write && ioAxiCmd.valid && caesarCtrl.io.in_stream.ready
-    caesarCtrl.io.in_stream.payload.fragment := io.axi.writeData.data & io.axi.writeData.strb
+    // TODO: Implement mask based on strb
+    //    val mask = Bits(axiConfig.dataWidth bits)
+    caesarCtrl.io.in_stream.payload.fragment := io.axi.writeData.data
     caesarCtrl.io.in_stream.payload.last := ioAxiSharedCmd.last
-
-    io.sdramAxi.sharedCmd := cloneOf(io.axi.arw)
-    io.sdramAxi.writeData.valid := caesarCtrl.io.out_stream.valid
-    io.sdramAxi.writeData.data := caesarCtrl.io.out_stream.payload
     caesarCtrl.io.out_stream.ready := io.sdramAxi.writeData.ready
 
-    io.sdramAxi.b.ready := True
-
+    io.sdramAxi.writeData <> io.axi.writeData
+//    io.sdramAxi.writeData.valid := caesarCtrl.io.out_stream.valid
+//    io.sdramAxi.writeData.data := caesarCtrl.io.out_stream.fragment
+//    io.sdramAxi.writeData.strb := io.axi.writeData.strb
+//    io.sdramAxi.writeData.last := caesarCtrl.io.out_stream.last
     error := io.sdramAxi.b.valid && !io.sdramAxi.b.isOKAY()
   } otherwise {
-    io.sdramAxi.sharedCmd := cloneOf(io.axi.arw)
-
-    val sdramAxiSharedCmd = io.sdramAxi.arw.unburstify
-    val sdramAxiCmd = sdramAxiSharedCmd.haltWhen(!sdramAxiSharedCmd.write && !io.sdramAxi.writeData.valid) // Halt when it's a read and the read is not valid
-
-    caesarCtrl.io.in_stream.valid := !sdramAxiCmd.write && io.axi.writeData.valid && caesarCtrl.io.in_stream.ready
+    caesarCtrl.io.in_stream.valid := !io.sdramAxi.sharedCmd.write && io.sdramAxi.readRsp.valid && caesarCtrl.io.in_stream.ready
     caesarCtrl.io.in_stream.payload.fragment := io.sdramAxi.readRsp.data
     caesarCtrl.io.in_stream.payload.last := io.sdramAxi.readRsp.last
 
-    io.axi.writeData.valid := caesarCtrl.io.out_stream.valid
-    io.axi.writeData.data := caesarCtrl.io.out_stream.payload
-    caesarCtrl.io.out_stream.ready := io.axi.writeData.ready
+    caesarCtrl.io.out_stream.ready := io.axi.readRsp.ready
 
-    io.axi.b.ready := True
+    io.sdramAxi.writeData.valid := caesarCtrl.io.out_stream.valid
+    io.sdramAxi.writeData.data := caesarCtrl.io.out_stream.fragment
+    io.sdramAxi.writeData.strb := "1111"
+    io.sdramAxi.writeData.last := caesarCtrl.io.out_stream.last
 
     error := io.axi.b.valid && !io.axi.b.isOKAY()
   }

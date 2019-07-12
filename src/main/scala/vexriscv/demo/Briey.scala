@@ -283,7 +283,11 @@ class Briey(config: BrieyConfig) extends Component{
       vgaClock        = vgaClockDomain
     )
     val vgaCtrl = Axi4VgaCtrl(vgaCtrlConfig)
-
+    val secureAccessCtrl = Axi4SharedSecurityCtrl(
+      axiDataWidth = 32,
+      axiAddrWidth = 32,
+      axiIdWidth = 4
+    )
 
 
     val core = new Area{
@@ -312,48 +316,20 @@ class Briey(config: BrieyConfig) extends Component{
     }
 
 
-    val secureAccess = new Area{
-      val secureAccessCtrl = Axi4SharedSecurityCtrl(
-        axiDataWidth = 32,
-        axiIdWidth = 4,
-        layout = sdramLayout, 
-        timing = sdramTimings, 
-        CAS = 3
-      )
-      
-      var iBusSdram : Axi4ReadOnly = null
-      var dBusSdram : Axi4Shared = null
-      for(plugin <- core.config.plugins) plugin match{
-        case plugin : IBusSimplePlugin => iBusSdram = plugin.iBus.toAxi4ReadOnly()
-        case plugin : IBusCachedPlugin => iBusSdram = plugin.iBus.toAxi4ReadOnly()
-        case plugin : DBusSimplePlugin => dBusSdram = plugin.dBus.toAxi4Shared()
-        case plugin : DBusCachedPlugin => dBusSdram = plugin.dBus.toAxi4Shared(true)
-        case plugin : CsrPlugin        => {
-          plugin.externalInterrupt := BufferCC(io.coreInterrupt)
-          plugin.timerInterrupt := timerCtrl.io.interrupt
-        }
-        case plugin : DebugPlugin      => debugClockDomain{
-          resetCtrl.axiReset setWhen(RegNext(plugin.io.resetOut))
-          io.jtag <> plugin.io.bus.fromJtag()
-        }
-        case _ =>
-      }
-    }
-
-
     val axiCrossbar = Axi4CrossbarFactory()
 
     axiCrossbar.addSlaves(
       ram.io.axi       -> (0x80000000L,   onChipRamSize),
-      // sdramCtrl.io.axi -> (0x40000000L,   sdramLayout.capacity),
-      secureAccess.secureAccessCtrl.io.axi -> (0x00000000L,   1 MB), // TODO: check if it should be this
+      sdramCtrl.io.axi -> (0x60000000L,   sdramLayout.capacity / 2),
+      secureAccessCtrl.io.axi -> (0x40000000L,   sdramLayout.capacity / 2),
       apbBridge.io.axi -> (0xF0000000L,   1 MB)
     )
 
     axiCrossbar.addConnections(
-      core.iBus       -> List(ram.io.axi, secureAccess.secureAccessCtrl.io.axi),
-      core.dBus       -> List(ram.io.axi, secureAccess.secureAccessCtrl.io.axi, apbBridge.io.axi),
-      vgaCtrl.io.axi  -> List(            secureAccess.secureAccessCtrl.io.axi)
+      core.iBus       -> List(ram.io.axi, secureAccessCtrl.io.axi),
+      core.dBus       -> List(ram.io.axi, secureAccessCtrl.io.axi, apbBridge.io.axi),
+      vgaCtrl.io.axi  -> List(            secureAccessCtrl.io.axi),
+      secureAccessCtrl.io.sdramAxi -> List(sdramCtrl.io.axi)
     )
 
 
@@ -364,12 +340,12 @@ class Briey(config: BrieyConfig) extends Component{
       crossbar.readRsp              << bridge.readRsp
     })
 
-    // axiCrossbar.addPipelining(sdramCtrl.io.axi)((crossbar,ctrl) => {
-    //   crossbar.sharedCmd.halfPipe()  >>  ctrl.sharedCmd
-    //   crossbar.writeData            >/-> ctrl.writeData
-    //   crossbar.writeRsp              <<  ctrl.writeRsp
-    //   crossbar.readRsp               <<  ctrl.readRsp
-    // })
+     axiCrossbar.addPipelining(secureAccessCtrl.io.axi)((crossbar,ctrl) => {
+       crossbar.sharedCmd.halfPipe()  >>  ctrl.sharedCmd
+       crossbar.writeData            >/-> ctrl.writeData
+       crossbar.writeRsp              <<  ctrl.writeRsp
+       crossbar.readRsp               <<  ctrl.readRsp
+     })
 
 
     axiCrossbar.addPipelining(ram.io.axi)((crossbar,ctrl) => {
@@ -391,45 +367,44 @@ class Briey(config: BrieyConfig) extends Component{
       cpu.readRsp               <-< crossbar.readRsp //Data cache directly use read responses without buffering, so pipeline it for FMax
     })
 
-    // TODO: figure out proper connection types for pipeline
-    // axiCrossbar.addPipelining(secureAccess.secureAccessCtrl.io.axi)((crossbar, ctrl) => {
-    //   crossbar.sharedCmd.halfPipe()  >>  ctrl.sharedCmd
-    //   crossbar.writeData            >/-> ctrl.writeData
-    //   crossbar.writeRsp              <<  ctrl.writeRsp
-    //   crossbar.readRsp               <<  ctrl.readRsp
-    // })
+     axiCrossbar.addPipelining(secureAccessCtrl.io.axi)((crossbar, ctrl) => {
+       crossbar.sharedCmd.halfPipe()  >>  ctrl.sharedCmd
+       crossbar.writeData            >/-> ctrl.writeData
+       crossbar.writeRsp              <<  ctrl.writeRsp
+       crossbar.readRsp               <<  ctrl.readRsp
+     })
 
     axiCrossbar.build()
 
 
     // Set up secondary axi bus between access control and the SRAM
-    val sdramAxiCrossbar = Axi4CrossbarFactory()
-
-    sdramAxiCrossbar.addSlaves(
-      sdramCtrl.io.axi -> (0x40000000L,   sdramLayout.capacity)
-    )
-
-    sdramAxiCrossbar.addConnections(
-      secureAccess.iBusSdram -> List(sdramCtrl.io.axi),
-      secureAccess.dBusSdram -> List(sdramCtrl.io.axi)
-      // vgaCtrl.io.axi  -> List(            sdramCtrl.io.axi)
-    )
-
-    sdramAxiCrossbar.addPipelining(sdramCtrl.io.axi)((crossbar,ctrl) => {
-      crossbar.sharedCmd.halfPipe()  >>  ctrl.sharedCmd
-      crossbar.writeData            >/-> ctrl.writeData
-      crossbar.writeRsp              <<  ctrl.writeRsp
-      crossbar.readRsp               <<  ctrl.readRsp
-    })
-
-    // sdramAxiCrossbar.addPipelining(secureAccess.secureAccessCtrl.io.sdramAxi)((ctrl, crossbar) => {
-    //   ctrl.sharedCmd.halfPipe()  >>  crossbar.sharedCmd
-    //   ctrl.writeData            >/-> crossbar.writeData
-    //   ctrl.writeRsp              <<  crossbar.writeRsp
-    //   ctrl.readRsp               <<  crossbar.readRsp
-    // })
-
-    sdramAxiCrossbar.build()
+//    val sdramAxiCrossbar = Axi4CrossbarFactory()
+//
+//    sdramAxiCrossbar.addSlaves(
+//      sdramCtrl.io.axi -> (0x40000000L,   sdramLayout.capacity)
+//    )
+//
+//    sdramAxiCrossbar.addConnections(
+//      secureAccess.iBusSdram -> List(sdramCtrl.io.axi),
+//      secureAccess.dBusSdram -> List(sdramCtrl.io.axi)
+//      // vgaCtrl.io.axi  -> List(            sdramCtrl.io.axi)
+//    )
+//
+//    sdramAxiCrossbar.addPipelining(sdramCtrl.io.axi)((crossbar,ctrl) => {
+//      crossbar.sharedCmd.halfPipe()  >>  ctrl.sharedCmd
+//      crossbar.writeData            >/-> ctrl.writeData
+//      crossbar.writeRsp              <<  ctrl.writeRsp
+//      crossbar.readRsp               <<  ctrl.readRsp
+//    })
+//
+//    // sdramAxiCrossbar.addPipelining(secureAccess.secureAccessCtrl.io.sdramAxi)((ctrl, crossbar) => {
+//    //   ctrl.sharedCmd.halfPipe()  >>  crossbar.sharedCmd
+//    //   ctrl.writeData            >/-> crossbar.writeData
+//    //   ctrl.writeRsp              <<  crossbar.writeRsp
+//    //   ctrl.readRsp               <<  crossbar.readRsp
+//    // })
+//
+//    sdramAxiCrossbar.build()
 
 
 
