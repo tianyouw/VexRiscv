@@ -89,12 +89,12 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiIdWidth: Int, layout: Sd
   }
 
 
-  when (io.axi.sharedCmd.payload.write) {
-    ???
-  } otherwise() {
-    // Read command
-    ???
-  }
+  // when (io.axi.sharedCmd.payload.write) {
+  //   ???
+  // } otherwise() {
+  //   // Read command
+  //   ???
+  // }
 
   // ???
 

@@ -21,5 +21,5 @@ case class CAESARCtrl(config : Axi4Config) extends Component {
 
   val crypto = new CAESARInterface()
   // TODO: Implement CAESAR spec
-  ???
+  // ???
 }
