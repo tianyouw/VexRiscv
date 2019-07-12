@@ -15,7 +15,26 @@ case class CAESARCtrl(config : Axi4Config) extends Component {
     val out_stream = master Stream(Fragment(Bits(config.dataWidth bits)))
   }
 
-  io.in_stream >/-> io.out_stream
+  val readyForInput = RegInit(True)
+  val last = RegInit(False)
+  val data = Reg(Bits(config.dataWidth bits))
+  val outValid = RegInit(False)
+  io.in_stream.ready := readyForInput
+  io.out_stream.fragment := data
+  io.out_stream.last := last
+  io.out_stream.valid := outValid
+
+  outValid := False
+  when (io.in_stream.valid && readyForInput) {
+    data := io.in_stream.fragment
+    last := io.in_stream.last
+    readyForInput := False
+  } elsewhen (io.out_stream.ready && !readyForInput) {
+    outValid := True
+    readyForInput := True
+  }
+
+//  io.in_stream >/-> io.out_stream
 
 //  val crypto = new CAESARInterface()
   // TODO: Implement CAESAR spec
