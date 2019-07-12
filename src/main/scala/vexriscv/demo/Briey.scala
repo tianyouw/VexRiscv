@@ -286,7 +286,8 @@ class Briey(config: BrieyConfig) extends Component{
     val secureAccessCtrl = Axi4SharedSecurityCtrl(
       axiDataWidth = 32,
       axiAddrWidth = 32,
-      axiIdWidth = 4
+      axiIdWidth = 4,
+      layout = sdramLayout
     )
 
 
@@ -320,7 +321,7 @@ class Briey(config: BrieyConfig) extends Component{
 
     axiCrossbar.addSlaves(
       ram.io.axi       -> (0x80000000L,   onChipRamSize),
-      sdramCtrl.io.axi -> (0x60000000L,   sdramLayout.capacity),
+//      sdramCtrl.io.axi -> (0x40000000L,   sdramLayout.capacity),
       secureAccessCtrl.io.axi -> (0x40000000L,   sdramLayout.capacity),
       apbBridge.io.axi -> (0xF0000000L,   1 MB)
     )
@@ -331,8 +332,8 @@ class Briey(config: BrieyConfig) extends Component{
 //      vgaCtrl.io.axi  -> List(            sdramCtrl.io.axi)
       core.iBus       -> List(ram.io.axi, secureAccessCtrl.io.axi),
       core.dBus       -> List(ram.io.axi, secureAccessCtrl.io.axi, apbBridge.io.axi),
-      vgaCtrl.io.axi  -> List(            secureAccessCtrl.io.axi),
-      secureAccessCtrl.io.sdramAxi -> List(sdramCtrl.io.axi)
+      vgaCtrl.io.axi  -> List(            secureAccessCtrl.io.axi)
+//      secureAccessCtrl.io.sdramAxi -> List(sdramCtrl.io.axi)
     )
 
 
@@ -422,6 +423,7 @@ class Briey(config: BrieyConfig) extends Component{
       )
     )
   }
+  axi.secureAccessCtrl.io.sdramAxi <> axi.sdramCtrl.io.axi
 
   io.gpioA          <> axi.gpioACtrl.io.gpio
   io.gpioB          <> axi.gpioBCtrl.io.gpio
