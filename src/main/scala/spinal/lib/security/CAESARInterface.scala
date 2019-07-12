@@ -38,6 +38,6 @@ class CAESARInterface() extends BlackBox {
   noIoPrefix()
   mapClockDomain(clock=io.clk, reset = io.rst)
   // TODO: Add Ascon RTL source here
-  ???
+  // ???
 
 }

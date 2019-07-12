@@ -4,12 +4,7 @@ import spinal.core._
 import spinal.core.internals.Operator
 import spinal.lib.bus.amba4.axi.{Axi4Config, Axi4Shared}
 import spinal.lib.memory.sdram._
-<<<<<<< HEAD
-import spinal.lib.{master, slave}
-// import spinal.lib.security.CssbAESARInterface
-=======
 import spinal.lib.{Fragment, Stream, master, slave}
->>>>>>> c28c1ed62455b27d3d39bff55f88944f6a5ded97
 
 /**
   * Created by Jiangyi on 2019-07-10.
@@ -94,12 +89,12 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiIdWidth: Int, layout: Sd
   }
 
 
-  when (io.axi.sharedCmd.payload.write) {
-    ???
-  } otherwise() {
-    // Read command
-    ???
-  }
+  // when (io.axi.sharedCmd.payload.write) {
+  //   ???
+  // } otherwise() {
+  //   // Read command
+  //   ???
+  // }
 
   // ???
 
