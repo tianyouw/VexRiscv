@@ -38,7 +38,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiIdWidth: Int, layout: Sd
 
   val io = new Bundle {
     val axi = slave(Axi4Shared(axiConfig))
-    // val sdramAxi = master(Axi4Shared(axiConfig))
+    val sdramAxi = master(Axi4Shared(axiConfig))
   }
 
 
