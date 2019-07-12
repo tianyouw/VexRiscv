@@ -55,6 +55,10 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   io.sdramAxi.sharedCmd.id := io.axi.sharedCmd.id
   io.sdramAxi.sharedCmd.setBurstINCR()
 
+  io.sdramAxi.writeData.valid := caesarCtrl.io.out_stream.valid
+  io.sdramAxi.writeData.data := caesarCtrl.io.out_stream.fragment
+  io.sdramAxi.writeData.strb := "1111"
+  io.sdramAxi.writeData.last := caesarCtrl.io.out_stream.last
 
   //Write rsp branch
   writeRsp.valid := ioAxiCmd.fire && ioAxiCmd.write && ioAxiCmd.last
@@ -83,7 +87,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     caesarCtrl.io.in_stream.payload.last := ioAxiSharedCmd.last
     caesarCtrl.io.out_stream.ready := io.sdramAxi.writeData.ready
 
-    io.sdramAxi.writeData <> io.axi.writeData
+//    io.sdramAxi.writeData <> io.axi.writeData
 //    io.sdramAxi.writeData.valid := caesarCtrl.io.out_stream.valid
 //    io.sdramAxi.writeData.data := caesarCtrl.io.out_stream.fragment
 //    io.sdramAxi.writeData.strb := io.axi.writeData.strb
@@ -96,10 +100,6 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
     caesarCtrl.io.out_stream.ready := io.axi.readRsp.ready
 
-    io.sdramAxi.writeData.valid := caesarCtrl.io.out_stream.valid
-    io.sdramAxi.writeData.data := caesarCtrl.io.out_stream.fragment
-    io.sdramAxi.writeData.strb := "1111"
-    io.sdramAxi.writeData.last := caesarCtrl.io.out_stream.last
 
     error := io.axi.b.valid && !io.axi.b.isOKAY()
   }
