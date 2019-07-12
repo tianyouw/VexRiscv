@@ -4,7 +4,7 @@ import spinal.core.{Area, Bundle, Component, cloneOf, isPow2}
 import spinal.lib.bus.amba4.axi.{Axi4Config, Axi4Shared}
 import spinal.lib.memory.sdram._
 import spinal.lib.{master, slave}
-import spinal.lib.security.CAESARInterface
+// import spinal.lib.security.CssbAESARInterface
 
 /**
   * Created by Jiangyi on 2019-07-10.
@@ -34,14 +34,14 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiIdWidth: Int, layout: Sd
   final val treeDepth = 4
   val io = new Bundle {
     val axi = slave(Axi4Shared(axiConfig))
-    val sdramAxi = master(Axi4Shared(axiConfig))
+    // val sdramAxi = master(Axi4Shared(axiConfig))
   }
 
-  val crypto = new CAESARInterface()
-  crypto.connectToCryptoEngineToBus(io.axi)
+  // val crypto = new CAESARInterface()
+  // crypto.connectToCryptoEngineToBus(io.axi)
 
-  io.axi <> io.sdramAxi
+  // io.axi <> io.sdramAxi
 
-  ???
+  // ???
 
 }
