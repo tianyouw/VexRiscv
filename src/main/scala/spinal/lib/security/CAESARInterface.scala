@@ -40,16 +40,4 @@ class CAESARInterface() extends BlackBox {
   // TODO: Add Ascon RTL source here
   ???
 
-  def connectToCryptoEngineToBus(axi : Axi4Shared) = new Area {
-    require(axi.config.dataWidth == 32)
-
-    val axiSharedCmd = axi.arw.unburstify
-    val axiCmd = axiSharedCmd.haltWhen(axiSharedCmd.write && !axi.writeData.valid)
-    ???
-//    io.pdi_valid := axiCmd.valid
-//    io.pdi_data := axi.writeData.data & axi.writeData.strb
-//
-//
-//    axiSharedCmd.ready.noBackendCombMerge //Verilator Perf
-  }
 }
