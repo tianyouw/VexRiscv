@@ -320,12 +320,15 @@ class Briey(config: BrieyConfig) extends Component{
 
     axiCrossbar.addSlaves(
       ram.io.axi       -> (0x80000000L,   onChipRamSize),
-      sdramCtrl.io.axi -> (0x60000000L,   sdramLayout.capacity / 2),
-      secureAccessCtrl.io.axi -> (0x40000000L,   sdramLayout.capacity / 2),
+      sdramCtrl.io.axi -> (0x60000000L,   sdramLayout.capacity),
+      secureAccessCtrl.io.axi -> (0x40000000L,   sdramLayout.capacity),
       apbBridge.io.axi -> (0xF0000000L,   1 MB)
     )
 
     axiCrossbar.addConnections(
+//      core.iBus       -> List(ram.io.axi, sdramCtrl.io.axi),
+//      core.dBus       -> List(ram.io.axi, sdramCtrl.io.axi, apbBridge.io.axi),
+//      vgaCtrl.io.axi  -> List(            sdramCtrl.io.axi)
       core.iBus       -> List(ram.io.axi, secureAccessCtrl.io.axi),
       core.dBus       -> List(ram.io.axi, secureAccessCtrl.io.axi, apbBridge.io.axi),
       vgaCtrl.io.axi  -> List(            secureAccessCtrl.io.axi),
@@ -340,7 +343,7 @@ class Briey(config: BrieyConfig) extends Component{
       crossbar.readRsp              << bridge.readRsp
     })
 
-     axiCrossbar.addPipelining(secureAccessCtrl.io.axi)((crossbar,ctrl) => {
+    axiCrossbar.addPipelining(sdramCtrl.io.axi)((crossbar,ctrl) => {
        crossbar.sharedCmd.halfPipe()  >>  ctrl.sharedCmd
        crossbar.writeData            >/-> ctrl.writeData
        crossbar.writeRsp              <<  ctrl.writeRsp
@@ -519,7 +522,7 @@ object BrieyDe2{
       val toplevel = new Briey(BrieyConfig.default.copy(sdramLayout    = IS42x320B.layout,
                                                         sdramTimings   = IS42x320B.timingGrade7,
                                                         onChipRamSize  = 32 kB))
-      HexTools.initRam(toplevel.axi.ram.ram, "src/main/ressource/hex/dhrystone.hex", 0x80000000l)
+      HexTools.initRam(toplevel.axi.ram.ram, "src/main/ressource/hex/memtest.hex", 0x80000000l)
       toplevel
     })
   }
