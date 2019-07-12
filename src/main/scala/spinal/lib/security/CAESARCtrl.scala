@@ -15,7 +15,7 @@ case class CAESARCtrl(config : Axi4Config) extends Component {
     val out_stream = master Stream(Fragment(Bits(config.dataWidth bits)))
   }
 
-  io.in_stream >/> io.out_stream
+  io.in_stream >/-> io.out_stream
 
 //  val crypto = new CAESARInterface()
   // TODO: Implement CAESAR spec
