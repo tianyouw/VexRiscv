@@ -51,6 +51,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   val writeRspValidReg = RegInit(False)
   val axiSharedCmdValidReg = RegInit(False)
   val sdramAxiSharedCmdValidReg = RegInit(False)
+  val readFinishedReg = RegInit(True)
 
 
   dataInFifo.io.push.valid := False
@@ -59,8 +60,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   caesarCtrl.io.out_stream <> dataOutFifo.io.push
   caesarCtrl.io.in_stream <> dataInFifo.io.pop
 
-
-  when (io.axi.sharedCmd.write) {
+  when (io.axi.sharedCmd.write && readFinishedReg) {
     dataOutFifo.io.pop.ready := io.sdramAxi.writeData.ready
 
     io.sdramAxi.writeData.valid := dataOutFifo.io.pop.valid && sdramWrEnReg
@@ -187,6 +187,12 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
   } otherwise {
     io.axi <> io.sdramAxi
+    when (io.axi.sharedCmd.fire) {
+      readFinishedReg := False
+    }
+    when (io.axi.readRsp.fire && io.axi.readRsp.last) {
+      readFinishedReg := True
+    }
     dataOutFifo.io.pop.ready := False
 
   }
