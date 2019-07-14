@@ -1,33 +1,34 @@
 package spinal.lib.security
 
 import spinal.core._
-import spinal.core.internals.Operator
-import spinal.lib.bus.amba4.axi.{Axi4Config, Axi4Shared}
-import spinal.lib.memory.sdram._
-import spinal.lib.{Fragment, Stream, master, slave}
+import spinal.lib.bus.amba4.axi.{Axi4Arw, Axi4Config, Axi4Shared}
+import spinal.lib.fsm.{EntryPoint, State, StateMachine}
+import spinal.lib.memory.sdram.{Axi4SharedSdramCtrl, SdramLayout}
+import spinal.lib.{Counter, CounterUpDown, Fragment, StreamFifo, master, slave}
 
 /**
-  * Created by Jiangyi on 2019-07-10.
+  * Created by Jiangyi on 2019-07-14.
   */
-
 object Axi4SharedSecurityCtrl {
   def getAxiConfig(dataWidth: Int, addressWidth: Int, idWidth: Int): Axi4Config = {
-      Axi4Config(
-        addressWidth = addressWidth,
-        dataWidth = dataWidth,
-        idWidth = idWidth,
-        useLock = false,
-        useRegion = false,
-        useCache = false,
-        useProt = false,
-        useQos = false
-      )
+    Axi4Config(
+      addressWidth = addressWidth,
+      dataWidth = dataWidth,
+      idWidth = idWidth,
+      useLock = false,
+      useRegion = false,
+      useCache = false,
+      useProt = false,
+      useQos = false
+    )
   }
 }
 
 
 case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWidth: Int, layout : SdramLayout) extends Component {
-//  val axiConfig = Axi4SharedSecurityCtrl.getAxiConfig(axiDataWidth, axiAddrWidth, axiIdWidth)
+  def bytePosition(addr: UInt) : UInt = addr(4 downto 2)
+
+
   val axiConfig = Axi4SharedSdramCtrl.getAxiConfig(axiDataWidth, axiIdWidth, layout)
   val startAddr = Reg(UInt(axiConfig.addressWidth bits))
   val writeToRam = Reg(Bool())
@@ -38,92 +39,178 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     val axi = slave(Axi4Shared(axiConfig))
     val sdramAxi = master(Axi4Shared(axiConfig))
   }
+  val dataInFifo = StreamFifo(dataType = Fragment(Bits(axiDataWidth bits)), depth = 8)
+  val dataOutFifo = StreamFifo(dataType = Fragment(Bits(axiDataWidth bits)), depth = 9) // Data = 8 bursts, One more for tag
 
+  val pendingWordsCounter = Counter(0 to 7)
   val caesarCtrl = CAESARCtrl(axiConfig)
 
-  val ioAxiSharedCmd = io.axi.arw.unburstify
-  val ioAxiCmd = ioAxiSharedCmd.haltWhen(ioAxiSharedCmd.write && !io.axi.writeData.valid)
-  val writeRsp = cloneOf(io.axi.writeRsp)
+//  val sharedCmdReg = RegNextWhen(io.axi.sharedCmd, io.axi.sharedCmd.fire)
 
-  // Set up sdram AXI
-  io.sdramAxi.sharedCmd.addr := io.axi.sharedCmd.addr
-  io.sdramAxi.sharedCmd.valid := io.axi.sharedCmd.valid
-  io.sdramAxi.sharedCmd.write := io.axi.sharedCmd.write
-  io.sdramAxi.sharedCmd.size := io.axi.sharedCmd.size
-  io.sdramAxi.sharedCmd.len  := io.axi.sharedCmd.len
-  io.sdramAxi.sharedCmd.id := io.axi.sharedCmd.id
-  io.sdramAxi.sharedCmd.burst := io.axi.sharedCmd.burst
+  val sdramWrEnReg = RegInit(False)
+  val writeRspValidReg = RegInit(False)
+  val axiSharedCmdValidReg = RegInit(False)
+  val sdramAxiSharedCmdValidReg = RegInit(False)
 
-  io.sdramAxi.writeData.valid := ioAxiCmd.valid
-  io.sdramAxi.writeData.data := io.axi.writeData.data
-  io.sdramAxi.writeData.strb := io.axi.writeData.strb
-  io.sdramAxi.writeData.last := ioAxiCmd.last
-//  io.sdramAxi.writeData.valid := caesarCtrl.io.out_stream.valid
-//  io.sdramAxi.writeData.data := caesarCtrl.io.out_stream.fragment
-//  io.sdramAxi.writeData.strb := "1111"
-//  io.sdramAxi.writeData.last := caesarCtrl.io.out_stream.last
 
-  //Write rsp branch
-  writeRsp.valid := ioAxiCmd.fire && ioAxiCmd.write && ioAxiCmd.last
-  writeRsp.id := ioAxiCmd.id
-  writeRsp.setOKAY()
-  writeRsp >-> io.axi.writeRsp
+  dataInFifo.io.push.valid := False
+  dataInFifo.io.push.payload.assignDontCare()
 
-  // Read rsp branch
-  io.axi.readRsp.id := ioAxiCmd.id
-  io.axi.readRsp.last := io.sdramAxi.readRsp.last
-  io.axi.readRsp.valid := io.sdramAxi.readRsp.valid
-  io.axi.readRsp.data := io.sdramAxi.readRsp.data
-  //  io.axi.readRsp.last := caesarCtrl.io.out_stream.last
-//  io.axi.readRsp.valid := caesarCtrl.io.out_stream.valid
-//  io.axi.readRsp.data := caesarCtrl.io.out_stream.fragment
-  io.axi.readRsp.resp := io.sdramAxi.readRsp.resp
+  caesarCtrl.io.out_stream <> dataOutFifo.io.push
+  caesarCtrl.io.in_stream <> dataInFifo.io.pop
 
-  //Readys
-  io.axi.writeData.ready :=  ioAxiSharedCmd.valid && ioAxiSharedCmd.write && ioAxiCmd.ready
-  io.sdramAxi.readRsp.ready := ioAxiSharedCmd.valid && !ioAxiSharedCmd.write
-//                                && caesarCtrl.io.in_stream.ready
-  io.sdramAxi.writeRsp.ready := io.axi.writeRsp.ready
-  ioAxiCmd.ready      := io.sdramAxi.sharedCmd.ready
 
-//  when (ioAxiSharedCmd.write) {
-//    caesarCtrl.io.in_stream.valid := ioAxiCmd.write && ioAxiCmd.valid && caesarCtrl.io.in_stream.ready
-//    // TODO: Implement mask based on strb
-//    //    val mask = Bits(axiConfig.dataWidth bits)
-//    caesarCtrl.io.in_stream.payload.fragment := io.axi.writeData.data
-//    caesarCtrl.io.in_stream.payload.last := ioAxiSharedCmd.last
-//    caesarCtrl.io.out_stream.ready := io.sdramAxi.writeData.ready
+  when (io.axi.sharedCmd.write) {
+    dataOutFifo.io.pop.ready := io.sdramAxi.writeData.ready
+
+    io.sdramAxi.writeData.valid := dataOutFifo.io.pop.valid && sdramWrEnReg
+    io.sdramAxi.writeData.data := dataOutFifo.io.pop.payload.fragment
+    io.sdramAxi.writeData.strb := "1111"
+    io.sdramAxi.writeData.last := dataOutFifo.io.pop.payload.last
+
+    io.sdramAxi.sharedCmd.size := io.axi.sharedCmd.size
+    io.sdramAxi.sharedCmd.len  := 0
+    io.sdramAxi.sharedCmd.id := io.axi.sharedCmd.id
+    io.sdramAxi.sharedCmd.burst := io.axi.sharedCmd.burst
+    io.sdramAxi.sharedCmd.write := sdramWrEnReg
+    io.sdramAxi.sharedCmd.addr := io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) @@ U"00000" + (pendingWordsCounter.value << 2)
+    io.sdramAxi.sharedCmd.valid := sdramAxiSharedCmdValidReg
+    io.sdramAxi.writeRsp.ready := True
+
+
+    io.axi.sharedCmd.ready := axiSharedCmdValidReg
+    io.axi.writeData.ready := False
+    io.axi.writeRsp.valid := writeRspValidReg
+    io.axi.writeRsp.resp := io.sdramAxi.writeRsp.resp
+    io.axi.writeRsp.payload.id := io.sdramAxi.writeRsp.payload.id
+
+    io.axi.readRsp <> io.sdramAxi.readRsp
+
+    val writeFsm = new StateMachine {
+      val idleState: State = new State with EntryPoint {
+        onEntry {
+          pendingWordsCounter := 0
+          sdramWrEnReg := False
+        }
+
+        whenIsActive {
+          when(io.axi.sharedCmd.fire) {
+            writeRspValidReg := True
+            axiSharedCmdValidReg := False
+
+            io.axi.writeData.ready := True
+            io.axi.writeRsp.isOKAY()
+          }
+
+          when(io.axi.writeRsp.fire) {
+            writeRspValidReg := False
+          }
+
+          when(io.axi.sharedCmd.valid && !io.axi.sharedCmd.ready) {
+            goto(readState)
+          }
+        }
+
+        onExit {
+          sdramAxiSharedCmdValidReg := True
+        }
+      }
+
+      val readState: State = new State {
+        //    onEntry(pendingWordsCounter := 0)
+        whenIsActive {
+
+            when (io.sdramAxi.sharedCmd.fire) {
+              sdramAxiSharedCmdValidReg := False
+            }
+
+            io.sdramAxi.writeData.valid := False
+//          val axiSharedCmd = cloneOf(io.axi.sharedCmd)
 //
-////    io.sdramAxi.writeData <> io.axi.writeData
-////    io.sdramAxi.writeData.valid := caesarCtrl.io.out_stream.valid
-////    io.sdramAxi.writeData.data := caesarCtrl.io.out_stream.fragment
-////    io.sdramAxi.writeData.strb := io.axi.writeData.strb
-////    io.sdramAxi.writeData.last := caesarCtrl.io.out_stream.last
-//    error := io.sdramAxi.b.valid && !io.sdramAxi.b.isOKAY()
-//  } otherwise {
-//    caesarCtrl.io.in_stream.valid := !io.sdramAxi.sharedCmd.write && io.sdramAxi.readRsp.valid && caesarCtrl.io.in_stream.ready
-//    caesarCtrl.io.in_stream.payload.fragment := io.sdramAxi.readRsp.data
-//    caesarCtrl.io.in_stream.payload.last := io.sdramAxi.readRsp.last
+//          axiSharedCmd.addr := io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) @@ U"00000" + (pendingWordsCounter.value << 2)
+//          axiSharedCmd.valid := True
+//          axiSharedCmd.write := False
 //
-//    caesarCtrl.io.out_stream.ready := io.axi.readRsp.ready
-//
-//
-//    error := io.axi.b.valid && !io.axi.b.isOKAY()
-//  }
+//          io.sdramAxi.sharedCmd <> axiSharedCmd
 
-  when (io.axi.sharedCmd.valid) {
-    // Used for calculating memory tree lookup
-    startAddr := io.axi.sharedCmd.payload.addr
+          dataInFifo.io.push.payload.last := True
+          io.sdramAxi.readRsp.ready := dataInFifo.io.push.ready
+
+          dataInFifo.io.push.valid := io.sdramAxi.readRsp.valid
+          when(pendingWordsCounter.value === bytePosition(io.axi.sharedCmd.addr)) {
+            dataInFifo.io.push.payload.fragment := io.axi.writeData.data
+          } otherwise {
+            dataInFifo.io.push.payload.fragment := io.sdramAxi.readRsp.data
+          }
+
+
+          when(dataInFifo.io.push.ready && (io.sdramAxi.readRsp.fire)) {
+//            io.sdramAxi.sharedCmd.valid := False
+            pendingWordsCounter.increment()
+            sdramAxiSharedCmdValidReg := True
+            when(pendingWordsCounter.willOverflowIfInc) {
+              goto(writeState)
+            }
+          }
+        }
+
+        onExit(sdramWrEnReg := True)
+      }
+
+      val writeState: State = new State {
+        whenIsActive {
+          when (io.sdramAxi.sharedCmd.fire) {
+            sdramAxiSharedCmdValidReg := False
+          }
+
+          when(io.sdramAxi.writeRsp.fire) {
+            pendingWordsCounter.increment()
+            sdramAxiSharedCmdValidReg := True
+            when(pendingWordsCounter.willOverflowIfInc) {
+              goto(idleState)
+            }
+          }
+        }
+
+        onExit {
+          sdramWrEnReg := False
+          axiSharedCmdValidReg := True
+          sdramAxiSharedCmdValidReg := False
+        }
+      }
+    }
+
+  } otherwise {
+    io.axi <> io.sdramAxi
+    dataOutFifo.io.pop.ready := False
+
   }
 
-
-  // when (io.axi.sharedCmd.payload.write) {
-  //   ???
-  // } otherwise() {
-  //   // Read command
-  //   ???
-  // }
-
-  // ???
+//  when (io.axi.sharedCmd.valid) {
+//    when (io.axi.sharedCmd.write) {
+//      io.sdramAxi.sharedCmd.addr := io.axi.sharedCmd.addr(axiDataWidth - 1 downto 5) @@ U"00000" + (pendingWordsCounter.value << 2)
+//      io.sdramAxi.sharedCmd.valid := io.axi.sharedCmd.valid && (pendingWordsCounter.value =/= bytePosition(io.axi.sharedCmd.addr) || sdramWrEnReg)
+//      io.sdramAxi.sharedCmd.write := sdramWrEnReg
+//      io.sdramAxi.sharedCmd.size := io.axi.sharedCmd.size
+//      io.sdramAxi.sharedCmd.len  := io.axi.sharedCmd.len
+//      io.sdramAxi.sharedCmd.id := io.axi.sharedCmd.id
+//      io.sdramAxi.sharedCmd.burst := io.axi.sharedCmd.burst
+//
+//      when (pendingWordsCounter.willOverflowIfInc) {
+//        sdramWrEnReg := !sdramWrEnReg
+//      }
+//
+//      when(dataInFifo.io.push.ready &&
+//        ((sdramWrEnReg && io.sdramAxi.writeData.fire) ||
+//          (!sdramWrEnReg && (io.sdramAxi.readRsp.fire || (pendingWordsCounter.value === bytePosition(io.axi.sharedCmd.addr)))))) {
+//        pendingWordsCounter.increment()
+//      }
+//
+//      io.axi.sharedCmd.ready := io.sdramAxi.writeRsp.valid
+//      io.axi.writeData.ready := io.sdramAxi.writeRsp.valid
+//    } otherwise {
+//      io.axi <> io.sdramAxi
+//    }
+//  }
 
 }
