@@ -65,7 +65,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
     io.sdramAxi.writeData.valid := dataOutFifo.io.pop.valid && sdramWrEnReg
     io.sdramAxi.writeData.data := dataOutFifo.io.pop.payload.fragment
-    io.sdramAxi.writeData.strb := "1111"
+    io.sdramAxi.writeData.strb := io.axi.writeData.strb
     io.sdramAxi.writeData.last := dataOutFifo.io.pop.payload.last
 
     io.sdramAxi.sharedCmd.size := io.axi.sharedCmd.size
@@ -74,6 +74,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     io.sdramAxi.sharedCmd.burst := io.axi.sharedCmd.burst
     io.sdramAxi.sharedCmd.write := sdramWrEnReg
     io.sdramAxi.sharedCmd.addr := io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) @@ U"00000" + (pendingWordsCounter.value << 2)
+//    io.sdramAxi.sharedCmd.addr := io.axi.sharedCmd.addr
     io.sdramAxi.sharedCmd.valid := sdramAxiSharedCmdValidReg
     io.sdramAxi.writeRsp.ready := True
 
@@ -84,8 +85,13 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     io.axi.writeRsp.resp := io.sdramAxi.writeRsp.resp
     io.axi.writeRsp.payload.id := io.sdramAxi.writeRsp.payload.id
 
-    io.axi.readRsp <> io.sdramAxi.readRsp
+    io.axi.readRsp.valid := False
+    io.axi.readRsp.data := io.sdramAxi.readRsp.data
+    io.axi.readRsp.last := io.sdramAxi.readRsp.last
+    io.axi.readRsp.id := io.sdramAxi.readRsp.id
+    io.axi.readRsp.resp := io.sdramAxi.readRsp.resp
 
+    io.sdramAxi.readRsp.ready := dataInFifo.io.push.ready
     val writeFsm = new StateMachine {
       val idleState: State = new State with EntryPoint {
         onEntry {
@@ -134,7 +140,6 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 //          io.sdramAxi.sharedCmd <> axiSharedCmd
 
           dataInFifo.io.push.payload.last := True
-          io.sdramAxi.readRsp.ready := dataInFifo.io.push.ready
 
           dataInFifo.io.push.valid := io.sdramAxi.readRsp.valid
           when(pendingWordsCounter.value === bytePosition(io.axi.sharedCmd.addr)) {
