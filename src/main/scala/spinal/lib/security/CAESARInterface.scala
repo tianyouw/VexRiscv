@@ -5,6 +5,8 @@ import spinal.lib.bus.amba4.axi.Axi4Shared
 import spinal.lib.memory.sdram.SdramCtrlAxi4SharedContext
 import spinal.lib.{IMasterSlave, master}
 
+import scala.io.Source
+
 /**
   * Created by Jiangyi on 2019-07-10.
   */
@@ -13,7 +15,7 @@ import spinal.lib.{IMasterSlave, master}
   See Figure 2 of : https://pdfs.semanticscholar.org/35a9/27d06d84d3f4079bde468cd74505235eb5e0.pdf
   */
 
-class CAESARInterface() extends BlackBox {
+case class CAESARInterface() extends BlackBox {
 
   val io = new Bundle {
     val clk = in Bool
@@ -37,7 +39,12 @@ class CAESARInterface() extends BlackBox {
 
   noIoPrefix()
   mapClockDomain(clock=io.clk, reset = io.rst)
-  // TODO: Add Ascon RTL source here
-  // ???
 
+  val ascon_path = "ascon_hardware/caesar_hardware_api_v_1_0_3/ASCON_ASCON/src_rtl/"
+  val source = Source.fromFile(ascon_path + "source_list.txt")
+  try {
+    source.getLines.foreach(f => addRTLPath(ascon_path + f))
+  } finally {
+    source.close()
+  }
 }

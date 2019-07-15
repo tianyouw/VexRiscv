@@ -1,3 +1,6 @@
 [submodule "src/test/resources/VexRiscvRegressionData"]
 	path = src/test/resources/VexRiscvRegressionData
 	url = ../VexRiscvRegressionData.git
+[submodule "src/main/scala/spinal/lib/security/ascon_hardware"]
+	path = ascon_hardware
+	url = https://github.com/IAIK/ascon_hardware.git

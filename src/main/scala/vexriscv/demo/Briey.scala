@@ -520,12 +520,13 @@ object BrieyDe2{
       )
     }
     val config = SpinalConfig()
-    config.generateVerilog({
+    val report = config.generateVhdl({
       val toplevel = new Briey(BrieyConfig.default.copy(sdramLayout    = IS42x320B.layout,
                                                         sdramTimings   = IS42x320B.timingGrade7,
                                                         onChipRamSize  = 32 kB))
       HexTools.initRam(toplevel.axi.ram.ram, "src/main/ressource/hex/memtest.hex", 0x80000000l)
       toplevel
     })
+    report.mergeRTLSource("mergedRTL")
   }
 }
