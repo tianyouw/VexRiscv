@@ -30,7 +30,6 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
 
   val axiConfig = Axi4SharedSdramCtrl.getAxiConfig(axiDataWidth, axiIdWidth, layout)
-  val startAddr = Reg(UInt(axiConfig.addressWidth bits))
   val writeToRam = Reg(Bool())
   val error = Bool()
   final val treeAry = 4
@@ -49,10 +48,11 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
   val sdramWrEnReg = RegInit(False)
   val writeRspValidReg = RegInit(False)
-  val axiSharedCmdValidReg = RegInit(False)
+  val axiSharedCmdReadyReg = RegInit(True)
   val sdramAxiSharedCmdValidReg = RegInit(False)
   val readFinishedReg = RegInit(True)
-
+  val addrReg = Reg(UInt(axiConfig.addressWidth bits))
+  val dataReg = Reg(Bits(axiDataWidth bits))
 
   dataInFifo.io.push.valid := False
   dataInFifo.io.push.payload.assignDontCare()
@@ -60,6 +60,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   caesarCtrl.io.out_stream <> dataOutFifo.io.push
   caesarCtrl.io.in_stream <> dataInFifo.io.pop
 
+  dataOutFifo.io.pop.ready := False
   when (io.axi.sharedCmd.write && readFinishedReg) {
     dataOutFifo.io.pop.ready := io.sdramAxi.writeData.ready
 
@@ -79,8 +80,8 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     io.sdramAxi.writeRsp.ready := True
 
 
-    io.axi.sharedCmd.ready := axiSharedCmdValidReg
-    io.axi.writeData.ready := False
+    io.axi.sharedCmd.ready := axiSharedCmdReadyReg
+    io.axi.writeData.ready := axiSharedCmdReadyReg
     io.axi.writeRsp.valid := writeRspValidReg
     io.axi.writeRsp.resp := io.sdramAxi.writeRsp.resp
     io.axi.writeRsp.payload.id := io.sdramAxi.writeRsp.payload.id
@@ -92,6 +93,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     io.axi.readRsp.resp := io.sdramAxi.readRsp.resp
 
     io.sdramAxi.readRsp.ready := dataInFifo.io.push.ready
+
     val writeFsm = new StateMachine {
       val idleState: State = new State with EntryPoint {
         onEntry {
@@ -100,19 +102,18 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
         }
 
         whenIsActive {
-          when(io.axi.sharedCmd.fire) {
+          when(io.axi.sharedCmd.fire && io.axi.writeData.fire) {
             writeRspValidReg := True
-            axiSharedCmdValidReg := False
-
-            io.axi.writeData.ready := True
+            axiSharedCmdReadyReg := True
             io.axi.writeRsp.isOKAY()
+          }
+
+          when(axiSharedCmdReadyReg) {
+            axiSharedCmdReadyReg := False
           }
 
           when(io.axi.writeRsp.fire) {
             writeRspValidReg := False
-          }
-
-          when(io.axi.sharedCmd.valid && !io.axi.sharedCmd.ready) {
             goto(readState)
           }
         }
@@ -125,7 +126,6 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
       val readState: State = new State {
         //    onEntry(pendingWordsCounter := 0)
         whenIsActive {
-
             when (io.sdramAxi.sharedCmd.fire) {
               sdramAxiSharedCmdValidReg := False
             }
@@ -149,7 +149,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           }
 
 
-          when(dataInFifo.io.push.ready && (io.sdramAxi.readRsp.fire)) {
+          when(dataInFifo.io.push.ready && io.sdramAxi.readRsp.fire) {
 //            io.sdramAxi.sharedCmd.valid := False
             pendingWordsCounter.increment()
             sdramAxiSharedCmdValidReg := True
@@ -179,7 +179,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
         onExit {
           sdramWrEnReg := False
-          axiSharedCmdValidReg := True
+          axiSharedCmdReadyReg := True
           sdramAxiSharedCmdValidReg := False
         }
       }
@@ -193,7 +193,6 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     when (io.axi.readRsp.fire && io.axi.readRsp.last) {
       readFinishedReg := True
     }
-    dataOutFifo.io.pop.ready := False
 
   }
 
