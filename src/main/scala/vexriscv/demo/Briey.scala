@@ -77,10 +77,10 @@ object BrieyConfig{
           //              portTlbSize = 4
           //            )
         ),
-        //                    new DBusSimplePlugin(
-        //                      catchAddressMisaligned = true,
-        //                      catchAccessFault = true
-        //                    ),
+//        new DBusSimplePlugin(
+//          catchAddressMisaligned = true,
+//          catchAccessFault = true
+//        ),
         new DBusCachedPlugin(
           config = new DataCacheConfig(
             cacheSize         = 4096,
