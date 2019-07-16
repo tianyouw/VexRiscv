@@ -53,6 +53,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   val readFinishedReg = RegInit(True)
   val addrReg = Reg(UInt(axiConfig.addressWidth bits))
   val dataReg = Reg(Bits(axiDataWidth bits))
+  val strbReg = Reg(Bits(axiConfig.bytePerWord bits))
   val busyReg = RegInit(False)
 
   dataInFifo.io.push.valid := False
@@ -67,7 +68,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
     io.sdramAxi.writeData.valid := dataOutFifo.io.pop.valid && sdramWrEnReg
     io.sdramAxi.writeData.data := dataOutFifo.io.pop.payload.fragment
-    io.sdramAxi.writeData.strb := io.axi.writeData.strb
+    io.sdramAxi.writeData.strb := "1111"
     io.sdramAxi.writeData.last := dataOutFifo.io.pop.payload.last
 
     io.sdramAxi.sharedCmd.size := io.axi.sharedCmd.size
@@ -107,6 +108,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
             busyReg := True
             addrReg := io.axi.sharedCmd.addr
             dataReg := io.axi.writeData.data
+            strbReg := io.axi.writeData.strb
             io.axi.writeRsp.isOKAY()
           }
 
@@ -165,6 +167,13 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           when (io.sdramAxi.sharedCmd.fire) {
             sdramAxiSharedCmdValidReg := False
           }
+
+          when(pendingWordsCounter.value === bytePosition(addrReg)) {
+            io.sdramAxi.writeData.strb := strbReg
+          }
+//          otherwise {
+//            io.sdramAxi.writeData.strb := "1111"
+//          }
 
           when(io.sdramAxi.writeRsp.fire) {
             pendingWordsCounter.increment()
