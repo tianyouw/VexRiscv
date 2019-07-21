@@ -4,7 +4,7 @@ import spinal.core._
 import spinal.lib.bus.amba4.axi.{Axi4Arw, Axi4Config, Axi4Shared}
 import spinal.lib.fsm.{EntryPoint, State, StateMachine}
 import spinal.lib.memory.sdram.{Axi4SharedSdramCtrl, SdramLayout}
-import spinal.lib.{Counter, CounterUpDown, Fragment, StreamFifo, master, slave}
+import spinal.lib.{Counter, CounterUpDown, Fragment, Stream, StreamFifo, master, slave}
 
 /**
   * Created by Jiangyi on 2019-07-14.
@@ -48,10 +48,11 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
   val sdramWrEnReg = RegInit(False)
   val writeRspValidReg = RegInit(False)
-  val axiSharedCmdReadyReg = RegInit(True)
   val sdramAxiSharedCmdValidReg = RegInit(False)
-  val readFinishedReg = RegInit(True)
-  val addrReg = Reg(UInt(axiConfig.addressWidth bits))
+
+
+
+  val axiSharedCmdReg = Reg(Stream(Axi4Arw(axiConfig)))
   val dataReg = Reg(Bits(axiDataWidth bits))
   val strbReg = Reg(Bits(axiConfig.bytePerWord bits))
   val busyReg = RegInit(False)
@@ -72,12 +73,19 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     io.sdramAxi.writeData.last := dataOutFifo.io.pop.payload.last
 
     io.sdramAxi.sharedCmd.size := io.axi.sharedCmd.size
-    io.sdramAxi.sharedCmd.len  := 0
-    io.sdramAxi.sharedCmd.id := io.axi.sharedCmd.id
+//    when (io.sdramAxi.sharedCmd.write) {
+//      io.sdramAxi.sharedCmd.len  := 0
+//      io.sdramAxi.sharedCmd.addr := axiSharedCmdReg.addr(axiConfig.addressWidth - 1 downto 5) @@ U"00000" + (pendingWordsCounter.value << 2)
+//
+//    } otherwise {
+      io.sdramAxi.sharedCmd.len  := 7
+      io.sdramAxi.sharedCmd.addr := axiSharedCmdReg.addr(axiConfig.addressWidth - 1 downto 5) @@ U"00000"
+//      io.sdramAxi.sharedCmd.id := 8
+//    }
+    io.sdramAxi.sharedCmd.id := axiSharedCmdReg.id
     io.sdramAxi.sharedCmd.burst := io.axi.sharedCmd.burst
     io.sdramAxi.sharedCmd.write := sdramWrEnReg
-    io.sdramAxi.sharedCmd.addr := addrReg(axiConfig.addressWidth - 1 downto 5) @@ U"00000" + (pendingWordsCounter.value << 2)
-//    io.sdramAxi.sharedCmd.addr := io.axi.sharedCmd.addr
+    //    io.sdramAxi.sharedCmd.addr := io.axi.sharedCmd.addr
     io.sdramAxi.sharedCmd.valid := sdramAxiSharedCmdValidReg
     io.sdramAxi.writeRsp.ready := True
 
@@ -106,7 +114,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           when(io.axi.sharedCmd.fire && io.axi.writeData.fire) {
             writeRspValidReg := True
             busyReg := True
-            addrReg := io.axi.sharedCmd.addr
+            axiSharedCmdReg := io.axi.sharedCmd
             dataReg := io.axi.writeData.data
             strbReg := io.axi.writeData.strb
             io.axi.writeRsp.isOKAY()
@@ -139,10 +147,10 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 //
 //          io.sdramAxi.sharedCmd <> axiSharedCmd
 
-          dataInFifo.io.push.payload.last := True
+          dataInFifo.io.push.payload.last := io.sdramAxi.readRsp.last
 
           dataInFifo.io.push.valid := io.sdramAxi.readRsp.valid
-          when(pendingWordsCounter.value === bytePosition(addrReg)) {
+          when(pendingWordsCounter.value === bytePosition(axiSharedCmdReg.addr)) {
             dataInFifo.io.push.payload.fragment := dataReg
           } otherwise {
             dataInFifo.io.push.payload.fragment := io.sdramAxi.readRsp.data
@@ -152,14 +160,14 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           when(dataInFifo.io.push.ready && io.sdramAxi.readRsp.fire) {
 //            io.sdramAxi.sharedCmd.valid := False
             pendingWordsCounter.increment()
-            sdramAxiSharedCmdValidReg := True
+//            sdramAxiSharedCmdValidReg := True
             when(pendingWordsCounter.willOverflowIfInc) {
+              sdramAxiSharedCmdValidReg := True
+              sdramWrEnReg := True
               goto(writeState)
             }
           }
         }
-
-        onExit(sdramWrEnReg := True)
       }
 
       val writeState: State = new State {
@@ -168,7 +176,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
             sdramAxiSharedCmdValidReg := False
           }
 
-          when(pendingWordsCounter.value === bytePosition(addrReg)) {
+          when(pendingWordsCounter.value === bytePosition(axiSharedCmdReg.addr)) {
             io.sdramAxi.writeData.strb := strbReg
           }
 //          otherwise {
@@ -176,11 +184,11 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 //          }
 
           when(io.sdramAxi.writeRsp.fire) {
-            pendingWordsCounter.increment()
-            sdramAxiSharedCmdValidReg := True
-            when(pendingWordsCounter.willOverflowIfInc) {
+//            pendingWordsCounter.increment()
+//            sdramAxiSharedCmdValidReg := True
+//            when(pendingWordsCounter.willOverflowIfInc) {
               goto(idleState)
-            }
+//            }
           }
         }
 
@@ -194,13 +202,6 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
   } otherwise {
     io.axi <> io.sdramAxi
-    when (io.axi.sharedCmd.fire) {
-      readFinishedReg := False
-    }
-    when (io.axi.readRsp.fire && io.axi.readRsp.last) {
-      readFinishedReg := True
-    }
-
   }
 
 //  when (io.axi.sharedCmd.valid) {
