@@ -26,22 +26,62 @@ object Axi4SharedSecurityCtrl {
 
 
 case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWidth: Int, layout : SdramLayout) extends Component {
+  val axiConfig = Axi4SharedSdramCtrl.getAxiConfig(axiDataWidth, axiIdWidth, layout)
   def bytePosition(addr: UInt) : UInt = addr(4 downto 2)
 
+  def combineStrbDataWithOriginal(originalData: Bits, newData: Bits, strbMask: Bits) : Bits = {
+    assert(originalData.getWidth == newData.getWidth)
+    assert(newData.getWidth == 32)
+    val outData = originalData
 
-  val axiConfig = Axi4SharedSdramCtrl.getAxiConfig(axiDataWidth, axiIdWidth, layout)
+    if (strbMask(3) == True) {
+      outData(31 downto 24) := newData(31 downto 24)
+    }
+
+    if (strbMask(2) == True) {
+      outData(23 downto 16) := newData(23 downto 16)
+    }
+
+    if (strbMask(1) == True) {
+      outData(15 downto 8) := newData(15 downto 8)
+    }
+
+    if (strbMask(0) == True) {
+      outData(7 downto 0) := newData(7 downto 0)
+    }
+
+    outData
+  }
+
+  def getSdramDataAddress(originalAddr: UInt, axiConfig: Axi4Config): UInt = {
+    originalAddr(axiConfig.addressWidth - 1 downto 5) @@ U"00000"
+  }
+
+  // Assuming 4-ary for now
+  def getTreeLeafNodeTagAddress(originalAddr: UInt, axiConfig: Axi4Config): UInt = {
+    0x4000000 + (getSdramDataAddress(originalAddr, axiConfig) / 32) * 24
+  }
+
+  def getParentNodeStartAddress(currentAddr: UInt, axiConfig: Axi4Config, levelIndex: Int): UInt = {
+    // Floor to nearest aligned memory address (Every 3 bytes is one mem tree block), add offset into the next level
+    (currentAddr / 12) * 12 + (0x300000 >> (2 * levelIndex))
+  }
+
+
+
   val writeToRam = Reg(Bool())
   val error = Bool()
-  final val treeAry = 4
+  final val burstLen = 8
 
   val io = new Bundle {
     val axi = slave(Axi4Shared(axiConfig))
     val sdramAxi = master(Axi4Shared(axiConfig))
   }
-  val dataInFifo = StreamFifo(dataType = Fragment(Bits(axiDataWidth bits)), depth = 8)
-  val dataOutFifo = StreamFifo(dataType = Fragment(Bits(axiDataWidth bits)), depth = 9) // Data = 8 bursts, One more for tag
 
-  val pendingWordsCounter = Counter(0 to 7)
+  val dataInFifo = StreamFifo(dataType = Fragment(CAESARCtrlInData(axiConfig)), depth = 10) // Data = 8, 2 more for nonce
+  val dataOutFifo = StreamFifo(dataType = Fragment(CAESARCtrlOutData(axiConfig)), depth = 14) // Data = 8 bursts, 6 more for tag + nonce
+
+  val pendingWordsCounter = Counter(0 until burstLen)
   val caesarCtrl = CAESARCtrl(axiConfig)
 
 //  val sharedCmdReg = RegNextWhen(io.axi.sharedCmd, io.axi.sharedCmd.fire)
@@ -67,16 +107,16 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     dataOutFifo.io.pop.ready := io.sdramAxi.writeData.ready
 
     io.sdramAxi.writeData.valid := dataOutFifo.io.pop.valid && sdramWrEnReg
-    io.sdramAxi.writeData.data := dataOutFifo.io.pop.payload.fragment
+    io.sdramAxi.writeData.data := dataOutFifo.io.pop.payload.fragment.data
     io.sdramAxi.writeData.strb := "1111"
     io.sdramAxi.writeData.last := dataOutFifo.io.pop.payload.last
 
     io.sdramAxi.sharedCmd.size := io.axi.sharedCmd.size
-    io.sdramAxi.sharedCmd.len  := 0
+    io.sdramAxi.sharedCmd.len  := burstLen - 1
     io.sdramAxi.sharedCmd.id := io.axi.sharedCmd.id
     io.sdramAxi.sharedCmd.burst := io.axi.sharedCmd.burst
     io.sdramAxi.sharedCmd.write := sdramWrEnReg
-    io.sdramAxi.sharedCmd.addr := addrReg(axiConfig.addressWidth - 1 downto 5) @@ U"00000" + (pendingWordsCounter.value << 2)
+    io.sdramAxi.sharedCmd.addr := getSdramDataAddress(addrReg, axiConfig)
 //    io.sdramAxi.sharedCmd.addr := io.axi.sharedCmd.addr
     io.sdramAxi.sharedCmd.valid := sdramAxiSharedCmdValidReg
     io.sdramAxi.writeRsp.ready := True
@@ -139,45 +179,70 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 //
 //          io.sdramAxi.sharedCmd <> axiSharedCmd
 
-          dataInFifo.io.push.payload.last := True
-
+          dataInFifo.io.push.payload.last := io.sdramAxi.readRsp.last
           dataInFifo.io.push.valid := io.sdramAxi.readRsp.valid
-          when(pendingWordsCounter.value === bytePosition(addrReg)) {
-            dataInFifo.io.push.payload.fragment := dataReg
-          } otherwise {
-            dataInFifo.io.push.payload.fragment := io.sdramAxi.readRsp.data
-          }
+
+//          when(pendingWordsCounter.value === bytePosition(addrReg)) {
+//            dataInFifo.io.push.payload.fragment := dataReg
+//          } otherwise {
+          dataInFifo.io.push.payload.fragment.data := io.sdramAxi.readRsp.data
+          dataInFifo.io.push.payload.fragment.encrypt_en := False // This is a decryption
+//          }
 
 
-          when(dataInFifo.io.push.ready && io.sdramAxi.readRsp.fire) {
+          when(io.sdramAxi.readRsp.fire) {
 //            io.sdramAxi.sharedCmd.valid := False
             pendingWordsCounter.increment()
-            sdramAxiSharedCmdValidReg := True
+//            sdramAxiSharedCmdValidReg := True
             when(pendingWordsCounter.willOverflowIfInc) {
-              goto(writeState)
+              goto(reEncryptState)
             }
           }
         }
-
-        onExit(sdramWrEnReg := True)
       }
 
-      val writeState: State = new State {
+      val reEncryptState: State = new State {
+        whenIsActive {
+          when(pendingWordsCounter.value === bytePosition(addrReg)) {
+            dataInFifo.io.push.payload.fragment.data := combineStrbDataWithOriginal(dataOutFifo.io.pop.payload.fragment.data, dataReg, strbReg)
+          } otherwise {
+            dataInFifo.io.push.payload.fragment.data := dataOutFifo.io.pop.payload.fragment.data
+          }
+          dataInFifo.io.push.valid := dataOutFifo.io.pop.valid
+          dataInFifo.io.push.payload.fragment.encrypt_en := True // This is an encryption
+          dataOutFifo.io.pop.ready := dataInFifo.io.push.ready
+        }
+
+        when(dataInFifo.io.push.fire) {
+          //            io.sdramAxi.sharedCmd.valid := False
+          pendingWordsCounter.increment()
+          //            sdramAxiSharedCmdValidReg := True
+          when(pendingWordsCounter.willOverflowIfInc) {
+            goto(writeDataState)
+          }
+        }
+        onExit {
+          sdramWrEnReg := True
+          sdramAxiSharedCmdValidReg := True
+        }
+      }
+
+      val writeDataState: State = new State {
         whenIsActive {
           when (io.sdramAxi.sharedCmd.fire) {
             sdramAxiSharedCmdValidReg := False
           }
 
-          when(pendingWordsCounter.value === bytePosition(addrReg)) {
-            io.sdramAxi.writeData.strb := strbReg
-          }
+//          when(pendingWordsCounter.value === bytePosition(addrReg)) {
+//            io.sdramAxi.writeData.strb := strbReg
+//          }
 //          otherwise {
 //            io.sdramAxi.writeData.strb := "1111"
 //          }
 
           when(io.sdramAxi.writeRsp.fire) {
             pendingWordsCounter.increment()
-            sdramAxiSharedCmdValidReg := True
+//            sdramAxiSharedCmdValidReg := True
             when(pendingWordsCounter.willOverflowIfInc) {
               goto(idleState)
             }
@@ -185,9 +250,33 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
         }
 
         onExit {
-          sdramWrEnReg := False
-          sdramAxiSharedCmdValidReg := False
-          busyReg := False
+//          sdramWrEnReg := False
+//          sdramAxiSharedCmdValidReg := False
+//          busyReg := False
+          sdramAxiSharedCmdValidReg := True
+        }
+      }
+
+      val writeTagState: State = new State {
+        whenIsActive {
+          when(io.sdramAxi.sharedCmd.fire) {
+            sdramAxiSharedCmdValidReg := False
+          }
+
+          //          when(pendingWordsCounter.value === bytePosition(addrReg)) {
+          //            io.sdramAxi.writeData.strb := strbReg
+          //          }
+          //          otherwise {
+          //            io.sdramAxi.writeData.strb := "1111"
+          //          }
+
+          when(io.sdramAxi.writeRsp.fire) {
+            pendingWordsCounter.increment()
+            //            sdramAxiSharedCmdValidReg := True
+            when(pendingWordsCounter.willOverflowIfInc) {
+              goto(idleState)
+            }
+          }
         }
       }
     }
