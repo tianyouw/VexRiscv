@@ -38,11 +38,17 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     val axi = slave(Axi4Shared(axiConfig))
     val sdramAxi = master(Axi4Shared(axiConfig))
   }
-  val dataInFifo = StreamFifo(dataType = Fragment(Bits(axiDataWidth bits)), depth = 8)
-  val dataOutFifo = StreamFifo(dataType = Fragment(Bits(axiDataWidth bits)), depth = 9) // Data = 8 bursts, One more for tag
+
+  // val dataInFifo = StreamFifo(dataType = Fragment(Bits(axiDataWidth bits)), depth = 8)
+  // val dataOutFifo = StreamFifo(dataType = Fragment(Bits(axiDataWidth bits)), depth = 9) // Data = 8 bursts, One more for tag
+  val dataInFifo = StreamFifo(dataType = Fragment(CAESARCtrlInData(axiConfig)), depth = 8)
+  val dataOutFifo = StreamFifo(dataType = Fragment(CAESARCtrlOutData(axiConfig)), depth = 9) // Data = 8 bursts, One more for tag
+
+
 
   val pendingWordsCounter = Counter(0 to 7)
-  val caesarCtrl = CAESARCtrl(axiConfig)
+  // val caesarCtrl = CAESARCtrl(axiConfig)
+  val caesarCtrl = DummyCAESARCtrl(axiConfig)
 
 //  val sharedCmdReg = RegNextWhen(io.axi.sharedCmd, io.axi.sharedCmd.fire)
 
@@ -67,7 +73,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     dataOutFifo.io.pop.ready := io.sdramAxi.writeData.ready
 
     io.sdramAxi.writeData.valid := dataOutFifo.io.pop.valid && sdramWrEnReg
-    io.sdramAxi.writeData.data := dataOutFifo.io.pop.payload.fragment
+    io.sdramAxi.writeData.data := dataOutFifo.io.pop.payload.fragment.data
     io.sdramAxi.writeData.strb := "1111"
     io.sdramAxi.writeData.last := dataOutFifo.io.pop.payload.last
 
@@ -140,12 +146,15 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 //          io.sdramAxi.sharedCmd <> axiSharedCmd
 
           dataInFifo.io.push.payload.last := True
+          
 
           dataInFifo.io.push.valid := io.sdramAxi.readRsp.valid
           when(pendingWordsCounter.value === bytePosition(addrReg)) {
-            dataInFifo.io.push.payload.fragment := dataReg
+            dataInFifo.io.push.payload.fragment.data := dataReg
           } otherwise {
-            dataInFifo.io.push.payload.fragment := io.sdramAxi.readRsp.data
+            dataInFifo.io.push.payload.fragment.data := io.sdramAxi.readRsp.data
+            dataInFifo.io.push.payload.fragment.encrypt_en := False // This is a decryption
+            // dataInFifo.io.push.payload.fragment.last := True // TODO: find good place
           }
 
 
@@ -188,6 +197,8 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           sdramWrEnReg := False
           sdramAxiSharedCmdValidReg := False
           busyReg := False
+
+          dataInFifo.io.push.payload.last := False
         }
       }
     }
