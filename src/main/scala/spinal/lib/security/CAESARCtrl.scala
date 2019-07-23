@@ -37,7 +37,7 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
   val outValid = RegInit(False)
 
   // val nonce = Reg(Bits(config.dataWidth bits)) init(0)
-  val nonce = Reg(UInt(config.dataWidth bits)) init(0)
+  val nonce = Reg(UInt(config.dataWidth bits)) init(1)
   val error = Bool()
 
   io.in_stream.ready := readyForInput
@@ -47,13 +47,24 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
   io.out_stream.valid := outValid
 
   outValid := False
-  error := False  // TODO: don't hardcode this
+  error := False  // TODO: send actual errors
   when (io.in_stream.valid && readyForInput) {
     rawData := io.in_stream.fragment.data
-    data := rawData ^ B(nonce)
+    
     last := io.in_stream.last
     readyForInput := False
-    tag := tag ^ data(config.dataWidth/2 - 1 downto 0)
+
+    if (io.in_stream.fragment.encrypt_en == True) {
+      data := rawData ^ B(nonce)
+      if (nonce % 2 == 0) {
+        tag := tag | data(config.dataWidth/2 - 1 downto 0)
+      } else {
+        tag := tag ^ data(config.dataWidth/2 - 1 downto 0)
+      }
+    } else {
+      data := rawData
+    }
+
 
   } elsewhen (io.out_stream.ready && !readyForInput) {
     outValid := True

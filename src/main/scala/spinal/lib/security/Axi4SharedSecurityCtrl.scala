@@ -145,16 +145,16 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 //
 //          io.sdramAxi.sharedCmd <> axiSharedCmd
 
-          dataInFifo.io.push.payload.last := True
+          dataInFifo.io.push.payload.last := io.sdramAxi.readRsp.last
           
 
           dataInFifo.io.push.valid := io.sdramAxi.readRsp.valid
           when(pendingWordsCounter.value === bytePosition(addrReg)) {
             dataInFifo.io.push.payload.fragment.data := dataReg
+            dataInFifo.io.push.payload.fragment.encrypt_en := True // This is an encryption
           } otherwise {
             dataInFifo.io.push.payload.fragment.data := io.sdramAxi.readRsp.data
             dataInFifo.io.push.payload.fragment.encrypt_en := False // This is a decryption
-            // dataInFifo.io.push.payload.fragment.last := True // TODO: find good place
           }
 
 

@@ -410,7 +410,7 @@ public:
 		//cout << "Simulation caped to " << timeToSec << " of real time"<< endl;
 		#endif
 
-		axiClk->add(new VexRiscvTracer(top->v->axi_core_cpu));
+		axiClk->add(new VexRiscvTracer(top->Briey->axi_core_cpu));
 
 		#ifdef VGA
 		Vga *vga = new Vga(top,640,480);
