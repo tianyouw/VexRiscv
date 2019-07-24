@@ -26,6 +26,45 @@ object Axi4SharedSecurityCtrl {
 
 
 case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWidth: Int, layout : SdramLayout) extends Component {
+  val axiConfig = Axi4SharedSdramCtrl.getAxiConfig(axiDataWidth, axiIdWidth, layout)
+  val writeToRam = Reg(Bool())
+  val error = Bool()
+  final val treeAry = 4
+
+  val io = new Bundle {
+    val axi = slave(Axi4Shared(axiConfig))
+    val sdramAxi = master(Axi4Shared(axiConfig))
+  }
+
+  // Data = 8 bytes, tag = 4 bytes, nonce = 2 bytes
+  val dataInFifo = StreamFifo(dataType = Fragment(Bits(axiDataWidth bits)), depth = 14)
+  val dataOutFifo = StreamFifo(dataType = Fragment(Bits(axiDataWidth bits)), depth = 14)
+
+  val dataSetAsideFifo = StreamFifo(dataType = Fragment(Bits(axiDataWidth bits)), depth = 8)
+
+  // Tree address registers
+  val currentNodeFirstSiblingStartAddrOffsetReg = Reg(UInt(axiConfig.addressWidth bits))
+  val currentAddrOffsetReg = Reg(UInt(axiConfig.addressWidth bits))
+  val currentLevelStartAddrReg = Reg(UInt(axiConfig.addressWidth bits))
+
+  val localTreeCounter = Counter(0 to 4) // 4 leaf nodes + 1 spare state for reading parent node
+  val pendingWordsCounter = Counter(0 to 7)
+  val caesarCtrl = CAESARCtrl(axiConfig)
+
+//  val sharedCmdReg = RegNextWhen(io.axi.sharedCmd, io.axi.sharedCmd.fire)
+
+  val sdramWrEnReg = RegInit(False)
+  val writeRspValidReg = RegInit(False)
+  val sdramAxiSharedCmdValidReg = RegInit(False)
+
+  val nonceVecReg = Vec(Bits(axiConfig.dataWidth bits), 4).setAsReg()
+
+  val axiSharedCmdReg = Reg(Stream(Axi4Arw(axiConfig)))
+  val dataReg = Reg(Bits(axiDataWidth bits))
+  val strbReg = Reg(Bits(axiConfig.bytePerWord bits))
+  val busyReg = RegInit(False)
+
+
   def bytePosition(addr: UInt) : UInt = addr(4 downto 2)
 
   def combineNewDataWithOriginal(originalData: Bits, newData: Bits, strbMask: Bits) : Bits = {
@@ -52,33 +91,38 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     outData
   }
 
-  val axiConfig = Axi4SharedSdramCtrl.getAxiConfig(axiDataWidth, axiIdWidth, layout)
-  val writeToRam = Reg(Bool())
-  val error = Bool()
-  final val treeAry = 4
-
-  val io = new Bundle {
-    val axi = slave(Axi4Shared(axiConfig))
-    val sdramAxi = master(Axi4Shared(axiConfig))
+  def getSdramDataAddress(originalAddr: UInt): UInt = {
+    originalAddr(axiConfig.addressWidth - 1 downto 5) @@ U"00000"
   }
-  val dataInFifo = StreamFifo(dataType = Fragment(Bits(axiDataWidth bits)), depth = 8)
-  val dataOutFifo = StreamFifo(dataType = Fragment(Bits(axiDataWidth bits)), depth = 9) // Data = 8 bursts, One more for tag
 
-  val pendingWordsCounter = Counter(0 to 7)
-  val caesarCtrl = CAESARCtrl(axiConfig)
+  // Assuming 4-ary for now
+  def getTreeLeafNodeTagAddress(originalAddr: UInt): UInt = {
+    0x4000000 + (originalAddr(axiConfig.addressWidth - 1 downto 5).resize(axiConfig.addressWidth) * 12)
+  }
 
-//  val sharedCmdReg = RegNextWhen(io.axi.sharedCmd, io.axi.sharedCmd.fire)
+  def updateToNextParentNodeAddrReg(): Unit = {
+    currentLevelStartAddrReg := getNextLevelStartAddr()
+    currentAddrOffsetReg := getParentNodeAddrOffset()
+    currentNodeFirstSiblingStartAddrOffsetReg := getFirstSiblingStartAddr(getParentNodeAddrOffset())
+  }
 
-  val sdramWrEnReg = RegInit(False)
-  val writeRspValidReg = RegInit(False)
-  val sdramAxiSharedCmdValidReg = RegInit(False)
+  def getCurrentTagNodeAddr(): UInt = {
+    currentLevelStartAddrReg + currentAddrOffsetReg
+  }
 
+  def getCurrentTagNodeFirstSiblingAddr() : UInt = {
+    currentLevelStartAddrReg + currentNodeFirstSiblingStartAddrOffsetReg
+  }
 
+  def getFirstSiblingStartAddr(addr: UInt): UInt = (addr / 0x300) * 0x300
 
-  val axiSharedCmdReg = Reg(Stream(Axi4Arw(axiConfig)))
-  val dataReg = Reg(Bits(axiDataWidth bits))
-  val strbReg = Reg(Bits(axiConfig.bytePerWord bits))
-  val busyReg = RegInit(False)
+  def getNextLevelStartAddr(): UInt = currentLevelStartAddrReg + (currentLevelStartAddrReg / 4)
+
+  def getParentNodeAddrOffset() : UInt = currentAddrOffsetReg / 0x300 * 0xC0
+
+  def getParentNodeAddr(): UInt = getNextLevelStartAddr() + getParentNodeAddrOffset()
+
+  def isRootOfTree(): Bool = getCurrentTagNodeAddr() === 0x7FFFFFE8
 
   dataInFifo.io.push.valid := False
   dataInFifo.io.push.payload.assignDontCare()
@@ -87,6 +131,8 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   caesarCtrl.io.in_stream <> dataInFifo.io.pop
 
   dataOutFifo.io.pop.ready := False
+
+  dataSetAsideFifo.io.push.valid := False
 
   when (busyReg || io.axi.sharedCmd.addr < 0x4000000) {
     dataOutFifo.io.pop.ready := io.sdramAxi.writeData.ready
@@ -110,7 +156,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     }
     //      io.sdramAxi.sharedCmd.id := 8
     //    }
-    io.sdramAxi.sharedCmd.addr := axiSharedCmdReg.addr(axiConfig.addressWidth - 1 downto 5) @@ U"00000"
+    io.sdramAxi.sharedCmd.addr := getSdramDataAddress(axiSharedCmdReg.addr)
     io.sdramAxi.sharedCmd.id := axiSharedCmdReg.id
     io.sdramAxi.sharedCmd.burst := axiSharedCmdReg.burst
     io.sdramAxi.sharedCmd.write := sdramWrEnReg
@@ -133,7 +179,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
     io.sdramAxi.readRsp.ready := dataInFifo.io.push.ready
 
-    val writeFsm = new StateMachine {
+    val fsm = new StateMachine {
       val idleState: State = new State with EntryPoint {
         onEntry {
           pendingWordsCounter := 0
@@ -145,9 +191,14 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
             busyReg := True
             axiSharedCmdReg := io.axi.sharedCmd
 
+            currentLevelStartAddrReg := 0x4000000
+            currentAddrOffsetReg := io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5).resize(axiConfig.addressWidth) * 0xC
+            currentNodeFirstSiblingStartAddrOffsetReg := getFirstSiblingStartAddr(io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5).resize(axiConfig.addressWidth) * 0xC)
+
             // For the read case, go directly to read state
             when(!io.axi.sharedCmd.write) {
-              goto(readState)
+              sdramAxiSharedCmdValidReg := True
+              goto(readDataFromSdramState)
             }
           }
 
@@ -161,22 +212,29 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
           when(io.axi.writeRsp.fire) {
             writeRspValidReg := False
-            goto(readState)
+            sdramAxiSharedCmdValidReg := True
+            goto(readDataFromSdramState)
           }
-        }
-
-        onExit {
-          sdramAxiSharedCmdValidReg := True
         }
       }
 
-      val readState: State = new State {
+      val readDataFromSdramState: State = new State {
+        val isReadingTag = RegInit(False)
         //    onEntry(pendingWordsCounter := 0)
         whenIsActive {
           when(io.sdramAxi.sharedCmd.fire) {
             sdramAxiSharedCmdValidReg := False
           }
 
+          when(isReadingTag) {
+            io.sdramAxi.sharedCmd.addr := getCurrentTagNodeAddr()
+            io.sdramAxi.sharedCmd.len := 5 // 6 * 32 == 192 bits, which is the leaf node size
+          } otherwise {
+            io.sdramAxi.sharedCmd.addr := getSdramDataAddress(axiSharedCmdReg.addr)
+            io.sdramAxi.sharedCmd.len := 7 // 8 * 32 == 256 bits, AKA length of a cache line
+          }
+
+          caesarCtrl.io.mode := caesarCtrl.encMode
           io.sdramAxi.writeData.valid := False
           //          val axiSharedCmd = cloneOf(io.axi.sharedCmd)
           //
@@ -186,34 +244,81 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           //
           //          io.sdramAxi.sharedCmd <> axiSharedCmd
 
-          dataInFifo.io.push.payload.last := io.sdramAxi.readRsp.last
-
+          dataInFifo.io.push.payload.last := io.sdramAxi.readRsp.last && isReadingTag
           dataInFifo.io.push.valid := io.sdramAxi.readRsp.valid
-          when(axiSharedCmdReg.write && pendingWordsCounter.value === bytePosition(axiSharedCmdReg.addr)) {
-            dataInFifo.io.push.payload.fragment := combineNewDataWithOriginal(io.sdramAxi.readRsp.data, dataReg, strbReg)
-          } otherwise {
-            dataInFifo.io.push.payload.fragment := io.sdramAxi.readRsp.data
-          }
+//          when(axiSharedCmdReg.write && pendingWordsCounter.value === bytePosition(axiSharedCmdReg.addr)) {
+//            dataInFifo.io.push.payload.fragment := combineNewDataWithOriginal(io.sdramAxi.readRsp.data, dataReg, strbReg)
+//          } otherwise {
+          dataInFifo.io.push.payload.fragment := io.sdramAxi.readRsp.data
+//          }
+          dataOutFifo.io.pop >> dataSetAsideFifo.io.push
 
-
-          when(dataInFifo.io.push.ready && io.sdramAxi.readRsp.fire) {
-            //            io.sdramAxi.sharedCmd.valid := False
-            pendingWordsCounter.increment()
-            //            sdramAxiSharedCmdValidReg := True
-            when(pendingWordsCounter.willOverflowIfInc) {
-              when(axiSharedCmdReg.write) {
-                sdramAxiSharedCmdValidReg := True
-                sdramWrEnReg := True
-                goto(writeState)
-              } otherwise {
-                goto(returnDataState)
-              }
+          when(dataInFifo.io.push.ready && io.sdramAxi.readRsp.fire && io.sdramAxi.readRsp.last) {
+            isReadingTag := True
+            sdramAxiSharedCmdValidReg := True
+            when(isReadingTag) {
+              goto(verifyTagFromSdramState)
             }
           }
         }
       }
 
-      val writeState: State = new State {
+      val verifyTagFromSdramState: State = new State {
+        val readComplete = RegInit(False)
+        io.sdramAxi.writeData.valid := False
+
+        when (localTreeCounter.value < 4) {
+          io.sdramAxi.sharedCmd.addr := getCurrentTagNodeFirstSiblingAddr() + (localTreeCounter << 2) + 16
+          io.sdramAxi.sharedCmd.len := 1 // Burst of 2, since 64 bit nonces
+        } otherwise {
+          io.sdramAxi.sharedCmd.addr := getParentNodeAddr()
+          io.sdramAxi.sharedCmd.len := 3 // Burst of 4, since 128 bit tag
+        }
+
+        when(io.sdramAxi.sharedCmd.fire) {
+          sdramAxiSharedCmdValidReg := False
+        }
+
+        dataInFifo.io.push.payload.last := io.sdramAxi.readRsp.fire && io.sdramAxi.readRsp.last && localTreeCounter.willOverflowIfInc
+
+        dataInFifo.io.push.valid := io.sdramAxi.readRsp.valid
+        dataInFifo.io.push.payload.fragment := io.sdramAxi.readRsp.data
+
+        when(localTreeCounter.value < 4) {
+          nonceVecReg(localTreeCounter.value) := io.sdramAxi.readRsp.data
+        }
+
+        when(io.sdramAxi.readRsp.fire && io.sdramAxi.readRsp.last) {
+          when(localTreeCounter.willOverflowIfInc) {
+            readComplete := True
+          } otherwise {
+            localTreeCounter.increment()
+            sdramAxiSharedCmdValidReg := True
+          }
+        }
+
+        caesarCtrl.io.error.ready := readComplete
+
+        when (caesarCtrl.io.error.fire && !caesarCtrl.io.error.payload) {
+          when(axiSharedCmdReg.write) {
+            caesarCtrl.io.in_stream <> dataSetAsideFifo.io.pop
+            caesarCtrl.io.mode := caesarCtrl.encMode
+            io.sdramAxi.sharedCmd.addr := getSdramDataAddress(axiSharedCmdReg.addr)
+            sdramWrEnReg := True
+            sdramAxiSharedCmdValidReg := True
+            localTreeCounter := 0
+            goto(writeToSdramState)
+          } elsewhen(isRootOfTree()) {
+            busyReg := False
+            goto(idleState)
+          } otherwise {
+              localTreeCounter := 0
+              updateToNextParentNodeAddrReg()
+          }
+        }
+      }
+
+      val writeToSdramState: State = new State {
         whenIsActive {
           when(io.sdramAxi.sharedCmd.fire) {
             sdramAxiSharedCmdValidReg := False
@@ -227,7 +332,12 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
             //            pendingWordsCounter.increment()
             //            sdramAxiSharedCmdValidReg := True
             //            when(pendingWordsCounter.willOverflowIfInc) {
-            goto(idleState)
+            when(isRootOfTree()) {
+              busyReg := False
+              goto(idleState)
+            } otherwise {
+              goto(updateTreeState)
+            }
             //            }
           }
         }
@@ -235,8 +345,11 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
         onExit {
           sdramWrEnReg := False
           sdramAxiSharedCmdValidReg := False
-          busyReg := False
         }
+      }
+
+      val updateTreeState: State = new State {
+
       }
 
       // State for returning data to dcache

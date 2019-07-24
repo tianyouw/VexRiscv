@@ -11,9 +11,16 @@ import spinal.lib.bus.amba4.axi.{Axi4ArwUnburstified, Axi4Config}
 // Wrapper interface that takes in raw data in 32 bit chunks, and massages it to conform to CAESAR API
 case class CAESARCtrl(config : Axi4Config) extends Component {
   val io = new Bundle {
+    val mode = in Bits(2 bits)
     val in_stream = slave Stream(Fragment(Bits(config.dataWidth bits)))
     val out_stream = master Stream(Fragment(Bits(config.dataWidth bits)))
+    val error = master Stream(Bool())
   }
+
+  def encMode: Bits = "00"
+  def decMode: Bits = "01"
+  def macGenMode: Bits = "10"
+  def macVerMode: Bits = "11"
 
   val readyForInput = RegInit(True)
   val last = RegInit(False)
