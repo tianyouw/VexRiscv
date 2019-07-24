@@ -4,8 +4,8 @@ import spinal.core._
 import spinal.lib.bus.amba4.axi.{Axi4Arw, Axi4Config, Axi4Shared}
 import spinal.lib.fsm.{EntryPoint, State, StateMachine}
 import spinal.lib.memory.sdram.{Axi4SharedSdramCtrl, SdramLayout}
-import spinal.lib.{Counter, CounterUpDown, Fragment, StreamFifo, master, slave}
-
+import spinal.lib.{Counter, CounterUpDown, Fragment, Stream, StreamFifo, master, slave}
+// import CAESARMode._
 /**
   * Created by Jiangyi on 2019-07-14.
   */
@@ -28,6 +28,29 @@ object Axi4SharedSecurityCtrl {
 case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWidth: Int, layout : SdramLayout) extends Component {
   def bytePosition(addr: UInt) : UInt = addr(4 downto 2)
 
+  def combineNewDataWithOriginal(originalData: Bits, newData: Bits, strbMask: Bits) : Bits = {
+    assert(originalData.getWidth == newData.getWidth)
+    assert(newData.getWidth == 32)
+    val outData = newData
+
+    when (strbMask(3)) {
+      outData(31 downto 24) := newData(31 downto 24)
+    }
+
+    when (strbMask(2)) {
+      outData(23 downto 16) := newData(23 downto 16)
+    }
+
+    when (strbMask(1)) {
+      outData(15 downto 8) := newData(15 downto 8)
+    }
+
+    when (strbMask(0)) {
+      outData(7 downto 0) := newData(7 downto 0)
+    }
+
+    outData
+  }
 
   val axiConfig = Axi4SharedSdramCtrl.getAxiConfig(axiDataWidth, axiIdWidth, layout)
   val writeToRam = Reg(Bool())
@@ -47,17 +70,18 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
 
   val pendingWordsCounter = Counter(0 to 7)
-  // val caesarCtrl = CAESARCtrl(axiConfig)
-  val caesarCtrl = DummyCAESARCtrl(axiConfig)
+  val caesarCtrl = CAESARCtrl(axiConfig)
+  // val caesarCtrl = DummyCAESARCtrl(axiConfig)
 
 //  val sharedCmdReg = RegNextWhen(io.axi.sharedCmd, io.axi.sharedCmd.fire)
 
   val sdramWrEnReg = RegInit(False)
   val writeRspValidReg = RegInit(False)
-  val axiSharedCmdReadyReg = RegInit(True)
+  // val axiSharedCmdReadyReg = RegInit(True)
   val sdramAxiSharedCmdValidReg = RegInit(False)
-  val readFinishedReg = RegInit(True)
-  val addrReg = Reg(UInt(axiConfig.addressWidth bits))
+  val axiSharedCmdReg = Reg(Stream(Axi4Arw(axiConfig)))
+  // val readFinishedReg = RegInit(True)
+  // val addrReg = Reg(UInt(axiConfig.addressWidth bits))
   val dataReg = Reg(Bits(axiDataWidth bits))
   val strbReg = Reg(Bits(axiConfig.bytePerWord bits))
   val busyReg = RegInit(False)
@@ -69,7 +93,8 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   caesarCtrl.io.in_stream <> dataInFifo.io.pop
 
   dataOutFifo.io.pop.ready := False
-  when (busyReg || io.axi.sharedCmd.write) {
+  // when (busyReg || io.axi.sharedCmd.write) {
+  when (busyReg || io.axi.sharedCmd.addr < 0x40000000) {
     dataOutFifo.io.pop.ready := io.sdramAxi.writeData.ready
 
     io.sdramAxi.writeData.valid := dataOutFifo.io.pop.valid && sdramWrEnReg
@@ -78,11 +103,19 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     io.sdramAxi.writeData.last := dataOutFifo.io.pop.payload.last
 
     io.sdramAxi.sharedCmd.size := io.axi.sharedCmd.size
-    io.sdramAxi.sharedCmd.len  := 0
+    when (axiSharedCmdReg.write) {
+      io.sdramAxi.sharedCmd.len  := 7
+    } otherwise {
+      io.sdramAxi.sharedCmd.len  := axiSharedCmdReg.len
+    }
+    
+
+    // io.sdramAxi.sharedCmd.addr := addrReg(axiConfig.addressWidth - 1 downto 5) @@ U"00000" + (pendingWordsCounter.value << 2)
+    io.sdramAxi.sharedCmd.addr := axiSharedCmdReg.addr(axiConfig.addressWidth - 1 downto 5) @@ U"00000" + (pendingWordsCounter.value << 2)
+
     io.sdramAxi.sharedCmd.id := io.axi.sharedCmd.id
     io.sdramAxi.sharedCmd.burst := io.axi.sharedCmd.burst
     io.sdramAxi.sharedCmd.write := sdramWrEnReg
-    io.sdramAxi.sharedCmd.addr := addrReg(axiConfig.addressWidth - 1 downto 5) @@ U"00000" + (pendingWordsCounter.value << 2)
 //    io.sdramAxi.sharedCmd.addr := io.axi.sharedCmd.addr
     io.sdramAxi.sharedCmd.valid := sdramAxiSharedCmdValidReg
     io.sdramAxi.writeRsp.ready := True
@@ -109,10 +142,20 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
         }
 
         whenIsActive {
-          when(io.axi.sharedCmd.fire && io.axi.writeData.fire) {
-            writeRspValidReg := True
+          when (io.axi.sharedCmd.fire) {
             busyReg := True
-            addrReg := io.axi.sharedCmd.addr
+            axiSharedCmdReg := io.axi.sharedCmd
+            // for read case, go direct to read state
+            when(!io.axi.sharedCmd.write) {
+              goto(readState)
+            }
+          }
+
+          // These two blocks are for the write case
+          when(io.axi.writeData.fire) {
+          // when(io.axi.sharedCmd.fire && io.axi.writeData.fire) {
+            writeRspValidReg := True
+            // addrReg := io.axi.sharedCmd.addr
             dataReg := io.axi.writeData.data
             strbReg := io.axi.writeData.strb
             io.axi.writeRsp.isOKAY()
@@ -132,43 +175,50 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
       val readState: State = new State {
         //    onEntry(pendingWordsCounter := 0)
         whenIsActive {
-            when (io.sdramAxi.sharedCmd.fire) {
-              sdramAxiSharedCmdValidReg := False
-            }
+          when (io.sdramAxi.sharedCmd.fire) {
+            sdramAxiSharedCmdValidReg := False
+          }
 
-            io.sdramAxi.writeData.valid := False
-//          val axiSharedCmd = cloneOf(io.axi.sharedCmd)
-//
-//          axiSharedCmd.addr := io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) @@ U"00000" + (pendingWordsCounter.value << 2)
-//          axiSharedCmd.valid := True
-//          axiSharedCmd.write := False
-//
-//          io.sdramAxi.sharedCmd <> axiSharedCmd
+          io.sdramAxi.writeData.valid := False
+          // val axiSharedCmd = cloneOf(io.axi.sharedCmd)
+
+          // axiSharedCmd.addr := io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) @@ U"00000" + (pendingWordsCounter.value << 2)
+          // axiSharedCmd.valid := True
+          // axiSharedCmd.write := False
+
+          // io.sdramAxi.sharedCmd <> axiSharedCmd
 
           dataInFifo.io.push.payload.last := io.sdramAxi.readRsp.last
           
 
           dataInFifo.io.push.valid := io.sdramAxi.readRsp.valid
-          when(pendingWordsCounter.value === bytePosition(addrReg)) {
-            dataInFifo.io.push.payload.fragment.data := dataReg
-            dataInFifo.io.push.payload.fragment.encrypt_en := True // This is an encryption
+          // when(pendingWordsCounter.value === bytePosition(addrReg)) {
+          when(axiSharedCmdReg.write && pendingWordsCounter.value === bytePosition(axiSharedCmdReg.addr)) {
+            dataInFifo.io.push.payload.fragment.data := combineNewDataWithOriginal(io.sdramAxi.readRsp.data, dataReg, strbReg)
+            // dataInFifo.io.push.payload.fragment.data := dataReg
+            dataInFifo.io.push.payload.fragment.mode := CAESARMode.ENCODE // This is an encryption
           } otherwise {
             dataInFifo.io.push.payload.fragment.data := io.sdramAxi.readRsp.data
-            dataInFifo.io.push.payload.fragment.encrypt_en := False // This is a decryption
+            dataInFifo.io.push.payload.fragment.mode := CAESARMode.DECODE // This is a decryption
           }
 
 
           when(dataInFifo.io.push.ready && io.sdramAxi.readRsp.fire) {
-//            io.sdramAxi.sharedCmd.valid := False
+            // io.sdramAxi.sharedCmd.valid := False
             pendingWordsCounter.increment()
-            sdramAxiSharedCmdValidReg := True
+            // sdramAxiSharedCmdValidReg := True
             when(pendingWordsCounter.willOverflowIfInc) {
-              goto(writeState)
+              when(axiSharedCmdReg.write) {
+                sdramAxiSharedCmdValidReg := True
+                sdramWrEnReg := True
+                goto(writeState)
+              } otherwise {
+                goto(returnDataState)
+              }
             }
           }
         }
-
-        onExit(sdramWrEnReg := True)
+        // onExit(sdramWrEnReg := True)
       }
 
       val writeState: State = new State {
@@ -177,19 +227,16 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
             sdramAxiSharedCmdValidReg := False
           }
 
-          when(pendingWordsCounter.value === bytePosition(addrReg)) {
-            io.sdramAxi.writeData.strb := strbReg
-          }
-//          otherwise {
-//            io.sdramAxi.writeData.strb := "1111"
-//          }
+          // otherwise {
+          //   io.sdramAxi.writeData.strb := "1111"
+          // }
 
           when(io.sdramAxi.writeRsp.fire) {
-            pendingWordsCounter.increment()
-            sdramAxiSharedCmdValidReg := True
-            when(pendingWordsCounter.willOverflowIfInc) {
-              goto(idleState)
-            }
+            // pendingWordsCounter.increment()
+            // sdramAxiSharedCmdValidReg := True
+            // when(pendingWordsCounter.willOverflowIfInc) {
+            goto(idleState)
+            // }
           }
         }
 
@@ -197,20 +244,39 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           sdramWrEnReg := False
           sdramAxiSharedCmdValidReg := False
           busyReg := False
+        }
+      }
 
-          dataInFifo.io.push.payload.last := False
+      // State for returning data to dcache
+      val returnDataState: State = new State {
+        whenIsActive {
+          io.axi.readRsp.valid := dataOutFifo.io.pop.valid
+          io.axi.readRsp.data := dataOutFifo.io.pop.payload.fragment.data
+          io.axi.readRsp.last := dataOutFifo.io.pop.payload.last
+          io.axi.readRsp.id := axiSharedCmdReg.id
+          io.axi.readRsp.setOKAY()
+
+          dataOutFifo.io.pop.ready := io.axi.readRsp.ready
+
+          when(io.axi.readRsp.fire && io.axi.readRsp.last) {
+            goto(idleState)
+          }
+        }
+        onExit {
+          sdramWrEnReg := False
+          sdramAxiSharedCmdValidReg := False
+          busyReg := False
         }
       }
     }
-
   } otherwise {
     io.axi <> io.sdramAxi
-    when (io.axi.sharedCmd.fire) {
-      readFinishedReg := False
-    }
-    when (io.axi.readRsp.fire && io.axi.readRsp.last) {
-      readFinishedReg := True
-    }
+    // when (io.axi.sharedCmd.fire) {
+    //   readFinishedReg := False
+    // }
+    // when (io.axi.readRsp.fire && io.axi.readRsp.last) {
+    //   readFinishedReg := True
+    // }
 
   }
 

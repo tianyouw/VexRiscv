@@ -7,14 +7,26 @@ import spinal.lib.bus.amba4.axi.{Axi4ArwUnburstified, Axi4Config}
 /**
   * Created by Jiangyi on 2019-07-11.
   */
+
+object CAESARMode extends SpinalEnum { 
+  val ENCODE, DECODE, MACGEN, MACVERIFY = value
+}
+// object CAESARMode extends Enumeration { 
+//   val ENCODE, DECODE, MACGEN, MACVERIFY = Value
+// }
+
 case class CAESARCtrlInData(config: Axi4Config) extends Bundle {
+  val mode = CAESARMode
   val data = Bits(config.dataWidth bits)
-  val encrypt_en = Bool()
-  val last = Bool()
+  val tag = Bits(config.dataWidth/2 bits)
+  val nonce = Reg(UInt(config.dataWidth bits)) init(1)  
+  // val encrypt_en = Bool()
 }
 
 case class CAESARCtrlOutData(config: Axi4Config) extends Bundle {
   val data = Bits(config.dataWidth bits)
+  val tag = Bits(config.dataWidth/2 bits)
+  val nonce = Reg(UInt(config.dataWidth bits)) init(1)
   val error = Bool()
 }
 
@@ -32,7 +44,7 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
   val last = RegInit(False)
   val data = Reg(Bits(config.dataWidth bits))
   val rawData = Reg(Bits(config.dataWidth bits))
-  val tag = Reg(Bits(config.dataWidth/2 bits))
+  val tag = Reg(Bits(config.dataWidth/2 bits)) init(0)
 
   val outValid = RegInit(False)
 
@@ -41,8 +53,10 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
   val error = Bool()
 
   io.in_stream.ready := readyForInput
+
   io.out_stream.fragment.data := data
   io.out_stream.fragment.error := error
+  io.out_stream.fragment.tag := tag
   io.out_stream.last := last
   io.out_stream.valid := outValid
 
@@ -54,7 +68,7 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
     last := io.in_stream.last
     readyForInput := False
 
-    if (io.in_stream.fragment.encrypt_en == True) {
+    if (io.in_stream.fragment.mode == CAESARMode.ENCODE) {
       data := rawData ^ B(nonce)
       if (nonce % 2 == 0) {
         tag := tag | data(config.dataWidth/2 - 1 downto 0)
@@ -63,14 +77,18 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
       }
     } else {
       data := rawData
+      tag := tag
     }
 
 
   } elsewhen (io.out_stream.ready && !readyForInput) {
+
+
+
     outValid := True
     readyForInput := True
     
-  } elsewhen (outValid && !io.in_stream.last) {
+  } elsewhen (outValid) { //outValid && !io.in_stream.last) {
       nonce := nonce + 1
   }
 
@@ -91,19 +109,24 @@ case class CAESARCtrl(config : Axi4Config) extends Component {
   val data = Reg(Bits(config.dataWidth bits))
   val outValid = RegInit(False)
   val error = Bool()
+  val tag = Reg(Bits(config.dataWidth/2 bits)) init(0)
 
   io.in_stream.ready := readyForInput
   io.out_stream.fragment.data := data
   io.out_stream.fragment.error := error
   io.out_stream.last := last
   io.out_stream.valid := outValid
+  io.out_stream.tag := tag
+  
 
   outValid := False
   error := False  // TODO: don't hardcode this
+  
   when (io.in_stream.valid && readyForInput) {
     data := io.in_stream.fragment.data
     last := io.in_stream.last
     readyForInput := False
+    tag := data(config.dataWidth/2 - 1 downto 0)
   } elsewhen (io.out_stream.ready && !readyForInput) {
     outValid := True
     readyForInput := True
