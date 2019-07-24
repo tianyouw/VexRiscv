@@ -5,7 +5,7 @@ import spinal.lib.bus.amba4.axi.{Axi4Arw, Axi4Config, Axi4Shared}
 import spinal.lib.fsm.{EntryPoint, State, StateMachine}
 import spinal.lib.memory.sdram.{Axi4SharedSdramCtrl, SdramLayout}
 import spinal.lib.{Counter, CounterUpDown, Fragment, Stream, StreamFifo, master, slave}
-// import CAESARMode._
+
 /**
   * Created by Jiangyi on 2019-07-14.
   */
@@ -64,14 +64,14 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
   // val dataInFifo = StreamFifo(dataType = Fragment(Bits(axiDataWidth bits)), depth = 8)
   // val dataOutFifo = StreamFifo(dataType = Fragment(Bits(axiDataWidth bits)), depth = 9) // Data = 8 bursts, One more for tag
-  val dataInFifo = StreamFifo(dataType = Fragment(CAESARCtrlInData(axiConfig)), depth = 8)
-  val dataOutFifo = StreamFifo(dataType = Fragment(CAESARCtrlOutData(axiConfig)), depth = 9) // Data = 8 bursts, One more for tag
+  val dataInFifo = StreamFifo(dataType = CAESARCtrlInData(axiConfig), depth = 8)
+  val dataOutFifo = StreamFifo(dataType = CAESARCtrlOutData(axiConfig), depth = 9) // Data = 8 bursts, One more for tag
 
 
 
   val pendingWordsCounter = Counter(0 to 7)
-  val caesarCtrl = CAESARCtrl(axiConfig)
-  // val caesarCtrl = DummyCAESARCtrl(axiConfig)
+  // val caesarCtrl = CAESARCtrl(axiConfig)
+  val caesarCtrl = DummyCAESARCtrl(axiConfig)
 
 //  val sharedCmdReg = RegNextWhen(io.axi.sharedCmd, io.axi.sharedCmd.fire)
 
@@ -89,8 +89,11 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   dataInFifo.io.push.valid := False
   dataInFifo.io.push.payload.assignDontCare()
 
-  caesarCtrl.io.out_stream <> dataOutFifo.io.push
-  caesarCtrl.io.in_stream <> dataInFifo.io.pop
+  caesarCtrl.io.out_datastream <> dataOutFifo.io.push
+  caesarCtrl.io.in_datastream <> dataInFifo.io.pop
+  caesarCtrl.io.in_cmdstream.valid := True  // TODO: PLS FIX!!
+  caesarCtrl.io.in_cmdstream.mode := caesarCtrl.NOP
+
 
   dataOutFifo.io.pop.ready := False
   // when (busyReg || io.axi.sharedCmd.write) {
@@ -98,9 +101,9 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     dataOutFifo.io.pop.ready := io.sdramAxi.writeData.ready
 
     io.sdramAxi.writeData.valid := dataOutFifo.io.pop.valid && sdramWrEnReg
-    io.sdramAxi.writeData.data := dataOutFifo.io.pop.payload.fragment.data
+    io.sdramAxi.writeData.data := dataOutFifo.io.pop.payload.data.fragment
     io.sdramAxi.writeData.strb := "1111"
-    io.sdramAxi.writeData.last := dataOutFifo.io.pop.payload.last
+    io.sdramAxi.writeData.last := dataOutFifo.io.pop.payload.data.last
 
     io.sdramAxi.sharedCmd.size := io.axi.sharedCmd.size
     when (axiSharedCmdReg.write) {
@@ -188,18 +191,20 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
           // io.sdramAxi.sharedCmd <> axiSharedCmd
 
-          dataInFifo.io.push.payload.last := io.sdramAxi.readRsp.last
+          dataInFifo.io.push.payload.data.last := io.sdramAxi.readRsp.last
           
-
+          
           dataInFifo.io.push.valid := io.sdramAxi.readRsp.valid
           // when(pendingWordsCounter.value === bytePosition(addrReg)) {
           when(axiSharedCmdReg.write && pendingWordsCounter.value === bytePosition(axiSharedCmdReg.addr)) {
-            dataInFifo.io.push.payload.fragment.data := combineNewDataWithOriginal(io.sdramAxi.readRsp.data, dataReg, strbReg)
+            dataInFifo.io.push.payload.data.fragment := combineNewDataWithOriginal(io.sdramAxi.readRsp.data, dataReg, strbReg)
             // dataInFifo.io.push.payload.fragment.data := dataReg
-            dataInFifo.io.push.payload.fragment.mode := CAESARMode.ENCODE // This is an encryption
+            // dataInFifo.io.push.payload.mode := caesarCtrl.ENCRYPT // This is an encryption
+            caesarCtrl.io.in_cmdstream.mode := caesarCtrl.ENCRYPT
           } otherwise {
-            dataInFifo.io.push.payload.fragment.data := io.sdramAxi.readRsp.data
-            dataInFifo.io.push.payload.fragment.mode := CAESARMode.DECODE // This is a decryption
+            dataInFifo.io.push.payload.data.fragment := io.sdramAxi.readRsp.data
+            // dataInFifo.io.push.payload.mode := caesarCtrl.DECRYPT // This is a decryption
+            caesarCtrl.io.in_cmdstream.mode := caesarCtrl.DECRYPT
           }
 
 
@@ -251,8 +256,8 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
       val returnDataState: State = new State {
         whenIsActive {
           io.axi.readRsp.valid := dataOutFifo.io.pop.valid
-          io.axi.readRsp.data := dataOutFifo.io.pop.payload.fragment.data
-          io.axi.readRsp.last := dataOutFifo.io.pop.payload.last
+          io.axi.readRsp.data := dataOutFifo.io.pop.payload.data.fragment
+          io.axi.readRsp.last := dataOutFifo.io.pop.payload.data.last
           io.axi.readRsp.id := axiSharedCmdReg.id
           io.axi.readRsp.setOKAY()
 
