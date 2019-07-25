@@ -385,7 +385,7 @@ public:
 		timeProcesses.push_back(uartRx);
 
 		SdramConfig *sdramConfig = new SdramConfig(
-			2,  //byteCount
+			4,  //byteCount
 			4,  //bankCount
 			1 << 13, //rowSize
 			1 << 10  //colSize
