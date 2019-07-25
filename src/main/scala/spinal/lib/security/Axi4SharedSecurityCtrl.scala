@@ -6,6 +6,8 @@ import spinal.lib.fsm.{EntryPoint, State, StateMachine}
 import spinal.lib.memory.sdram.{Axi4SharedSdramCtrl, SdramLayout}
 import spinal.lib.{Counter, CounterUpDown, Fragment, Stream, StreamFifo, master, slave}
 
+import scala.math.pow
+
 /**
   * Created by Jiangyi on 2019-07-14.
   */
@@ -31,28 +33,27 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   val error = Bool()
 
   // -------------Tree calculation stuff start
-  final val treeAry = 4
   final val treeStart = 0x4000000 // TODO: andrew, replace this with whatever you want
   final val memorySizeBytes = 32 * 1024 * 1024 // TODO: andrew, get this from somewhere else?
+
+  final val treeAry = 4
   final val blockSizeBytes = 24
+  final val cacheLineSize = 32
+
+  final val blocksInLastLayer = memorySizeBytes / cacheLineSize
 
 //  def getParent(block: Int) = (block - 1) / treeAry
   def getChild(block: Int, childNum: Int) = treeAry * block + childNum + 1
-  def getNumLayers(memorySize: Int): Int = {
-    var prevLayerBlock = 0
-    var currentLayerBlock = 1
-    var layerCounter = 1
-    while ((currentLayerBlock - prevLayerBlock) < memorySize / 32) {
-      var next = getChild(currentLayerBlock, 0)
-      prevLayerBlock = currentLayerBlock
-      currentLayerBlock = next
-      layerCounter += 1
-    }
-
-    layerCounter
+  def getLayerSize(layer: Int): Int = pow(treeAry, layer).intValue
+  def followChild(layer: Int, child: Int, block: Int = 0): Int = if (layer > 0) followChild(layer - 1, child, getChild(block, child)) else block
+  def getBottomLayer(numBlocks: Int): Int = {
+    def computeLargestLayer(layer: Int = 0): Int = if (getLayerSize(layer) < numBlocks) computeLargestLayer(layer + 1) else layer
+    computeLargestLayer()
   }
+  def getNumLayers(numBlocks: Int): Int = getBottomLayer(numBlocks) + 1
+  def getAddress(block: Int): Int = block * blockSizeBytes + treeStart
 
-  val numLayers = getNumLayers(memorySizeBytes)
+  val numLayers = getNumLayers(blocksInLastLayer)
   // -------------Tree calculation stuff end
   val io = new Bundle {
     val axi = slave(Axi4Shared(axiConfig))
@@ -61,11 +62,9 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
   val layerAddressVec = Vec(UInt(axiConfig.addressWidth bits), numLayers)
 
-  var blockNum = 0
-  for (layer <- 0 until numLayers) {
-    layerAddressVec(layer) := treeStart +  blockNum * 24
-    blockNum = getChild(blockNum, 0)
-  }
+  (0 until numLayers) foreach (layer => {
+    layerAddressVec(layer) := getAddress(followChild(layer, 0))
+  })
 
   val layerIndexReg = RegInit(U(numLayers))
   // Data = 8 bytes, tag = 4 bytes, nonce = 2 bytes
@@ -104,7 +103,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   val caesarInputCmdValidReg = RegInit(False)
 
 
-
+  def bytesToBits(bytes: Int): Int = bytes * 8
 
   def bytePosition(addr: UInt) : UInt = addr(4 downto 2)
 
@@ -138,7 +137,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
 //  // Assuming 4-ary for now
 //  def getTreeLeafNodeTagAddress(originalAddr: UInt): UInt = {
-//    0x4000000 + (originalAddr(axiConfig.addressWidth - 1 downto 5).resize(axiConfig.addressWidth) * 12)
+//    treeStart + (originalAddr(axiConfig.addressWidth - 1 downto 5).resize(axiConfig.addressWidth) * 12)
 //  }
 //
   def updateToNextParentNodeAddrReg(): Unit = {
@@ -154,18 +153,19 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     (currentLevelStartAddr + getFirstSiblingAddrOffset(currentAddrOffsetReg)).resize(axiConfig.addressWidth)
   }
 //
-  def getFirstSiblingAddrOffset(addr: UInt): UInt = (addr / 0x60) * 0x60
+  val sizeOfSiblings = blockSizeBytes * treeAry
+  def getFirstSiblingAddrOffset(addr: UInt): UInt = (addr / sizeOfSiblings) * sizeOfSiblings
 //
 //
-  def getParentNodeAddrOffset() : UInt = ((currentAddrOffsetReg / 0x60) * 0x18).resize(axiConfig.addressWidth)
+  def getParentNodeAddrOffset() : UInt = ((currentAddrOffsetReg / sizeOfSiblings) * blockSizeBytes).resize(axiConfig.addressWidth)
 //
   def getParentNodeAddr(): UInt = (layerAddressVec(layerIndexReg - 1) + getParentNodeAddrOffset()).resize(axiConfig.addressWidth)
 //
   def isRootOfTree(): Bool = getCurrentTagNodeAddr() === treeStart
 
   def getSiblingIndex(): UInt = {
-    val blockNum = (currentAddrOffsetReg / 24)
-    val antimask = U(0x03, 27 bits)
+    val blockNum = (currentAddrOffsetReg / blockSizeBytes)
+    val antimask = U(0x03, 27 bits) // This constant comes from Spinal's complaining
     (blockNum - ((blockNum - 1) & ~antimask) - 1).resize(2 bits)
   }
 
@@ -197,7 +197,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
   val verifyTagStateReadCompleteReg = RegInit(False)
 
-  when (busyReg || io.axi.sharedCmd.addr < 0x4000000) {
+  when (busyReg || io.axi.sharedCmd.addr < treeStart) {
     dataOutFifo.io.pop.ready := io.sdramAxi.writeData.ready
 
 
@@ -266,8 +266,8 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
             verifyTagStateReadCompleteReg := False
 
             layerIndexReg := numLayers - 1
-//            currentLevelStartAddrReg := 0x4000000
-            currentAddrOffsetReg := (io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) * 24)
+//            currentLevelStartAddrReg := treeStart
+            currentAddrOffsetReg := (io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) * blockSizeBytes)
 //            currentNodeFirstSiblingStartAddrOffsetReg := getFirstSiblingAddrOffset(io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) * 0xC).resize(axiConfig.addressWidth)
 
             // For the read case, go directly to read state
