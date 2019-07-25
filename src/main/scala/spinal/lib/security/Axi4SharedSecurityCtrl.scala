@@ -63,8 +63,8 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
   var blockNum = 0
   for (layer <- 0 until numLayers) {
-    blockNum = getChild(blockNum, 0)
     layerAddressVec(layer) := treeStart +  blockNum * 24
+    blockNum = getChild(blockNum, 0)
   }
 
   val layerIndexReg = RegInit(U(numLayers))
@@ -346,6 +346,8 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
               } otherwise {
                 when(isRootOfTree()) {
                   busyReg := False
+                  sdramWrEnReg := False
+                  sdramAxiSharedCmdValidReg := False
                   goto(idleState)
                 } otherwise {
                   sdramAxiSharedCmdValidReg := True
