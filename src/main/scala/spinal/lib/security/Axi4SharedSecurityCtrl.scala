@@ -244,6 +244,10 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
     caesarCtrl.io.in_cmdstream.valid := caesarInputCmdValidReg
 
+    when(caesarCtrl.io.in_cmdstream.fire) {
+      caesarInputCmdValidReg := False
+    }
+
     val fsm = new StateMachine {
       val idleState: State = new State with EntryPoint {
         onEntry {
@@ -263,7 +267,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
             layerIndexReg := numLayers - 1
 //            currentLevelStartAddrReg := 0x4000000
-            currentAddrOffsetReg := (io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) * 24).resize(axiConfig.addressWidth)
+            currentAddrOffsetReg := (io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) * 24)
 //            currentNodeFirstSiblingStartAddrOffsetReg := getFirstSiblingAddrOffset(io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) * 0xC).resize(axiConfig.addressWidth)
 
             // For the read case, go directly to read state
@@ -294,6 +298,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
       val verifyTagFromSdramState: State = new State {
         whenIsActive {
           io.sdramAxi.writeData.valid := False
+          dataOutFifo.io.push.valid := False
           caesarCtrl.io.in_cmdstream.mode := caesarCtrl.MACVERIFY
           caesarCtrl.io.out_datastream.ready := verifyTagStateReadCompleteReg
 
@@ -342,6 +347,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
               when(!writeDataCompleteReg) {
                 writeDataCompleteReg := True
+                caesarInputCmdValidReg := True
                 goto(decryptDataState)
               } otherwise {
                 when(isRootOfTree()) {
@@ -416,18 +422,22 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
             when (!decryptStateReadDataReg) {
               sdramAxiSharedCmdValidReg := True
             }
+          }
 
-            when(decryptStateReadDataReg && dataSetAsideFifo.io.push.fire && dataSetAsideFifo.io.push.last) {
-              when(axiSharedCmdReg.write) {
-                caesarInputCmdValidReg := True
-                goto(encryptDataState)
-              } otherwise {
-                sdramWrEnReg := False
-                sdramAxiSharedCmdValidReg := False
-                goto(returnDataState)
-              }
+          when(decryptStateReadDataReg && dataSetAsideFifo.io.push.fire && dataSetAsideFifo.io.push.last) {
+            when(axiSharedCmdReg.write) {
+              caesarInputCmdValidReg := True
+              goto(encryptDataState)
+            } otherwise {
+              sdramWrEnReg := False
+              sdramAxiSharedCmdValidReg := False
+              goto(returnDataState)
             }
           }
+        }
+
+        onExit {
+          decryptStateReadDataReg := False
         }
       }
 
@@ -469,10 +479,6 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
             sdramAxiSharedCmdValidReg := False
           }
 
-          when(caesarCtrl.io.in_cmdstream.fire) {
-            caesarInputCmdValidReg := False
-          }
-
           io.sdramAxi.sharedCmd.addr := getSdramDataAddress(axiSharedCmdReg.addr)
           io.sdramAxi.sharedCmd.len := 7 // 8 data bursts
           io.sdramAxi.writeData.last := pendingWordsCounter.willOverflowIfInc
@@ -493,12 +499,12 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
             nextNonceTagBlockFifo.io.push.valid := dataOutFifo.io.pop.valid
             nextNonceTagBlockFifo.io.push.payload := dataOutFifo.io.pop.data
             dataOutFifo.io.pop.ready := nextNonceTagBlockFifo.io.push.ready
-          }
 
-          when (dataOutFifo.io.pop.fire) {
-            sdramAxiSharedCmdValidReg := True
-            sdramWrEnReg := True
-            goto(writeNewTagState)
+            when (dataOutFifo.io.pop.fire && dataOutFifo.io.pop.data.last) {
+              sdramAxiSharedCmdValidReg := True
+              sdramWrEnReg := True
+              goto(writeNewTagState)
+            }
           }
 
         onExit {
@@ -523,6 +529,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           io.sdramAxi.writeData.data := nextNonceTagBlockFifo.io.pop.payload.fragment
           io.sdramAxi.writeData.last := nextNonceTagBlockFifo.io.pop.payload.last
           io.sdramAxi.writeData.strb := "1111"
+          nextNonceTagBlockFifo.io.pop.ready := io.sdramAxi.writeData.ready
 
           when(io.sdramAxi.writeData.fire) {
             when (pendingWordsCounter.value === 0 || pendingWordsCounter.value === 1) {
@@ -552,10 +559,6 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
       val calculateNewTagState: State = new State {
 
         whenIsActive {
-          when (caesarCtrl.io.in_cmdstream.fire) {
-            caesarInputCmdValidReg := False
-          }
-
           dataInFifo.io.push.data.fragment := nonceVecReg(pendingWordsCounter)
           dataInFifo.io.push.data.last := pendingWordsCounter.willOverflowIfInc
           dataInFifo.io.push.valid := calculateNewTagDataInFifoValidReg

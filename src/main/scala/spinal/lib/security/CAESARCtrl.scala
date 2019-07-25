@@ -83,10 +83,9 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
 
   switch(mode) {
     is(ENCRYPT){
-      when (io.in_datastream.fire) {
+      when (io.in_datastream.fire && burstCntr < 8) {
         // input data burst
         currData := io.in_datastream.data
-        readyForInput := False
 
         when (burstCntr === 0) { // even, first one
           outTag := B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment)
@@ -97,15 +96,20 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
         }
         data.fragment := currData.fragment ^ internalNonce(config.dataWidth-1 downto 0).asBits
 
-      } elsewhen (io.out_datastream.fire) {
         outValid := True
+        readyForInput := False
+
+      } elsewhen (io.out_datastream.fire) {
+        outValid := False
         readyForInput := True
         burstCntr.increment()
 
-        when (burstCntr.value > 13) {
+        when (burstCntr.willOverflowIfInc) {
           internalNonce := internalNonce + 1
-          burstCntr.clear()
-        } elsewhen (burstCntr === 8) {   // sending internalNonce
+          inReady := True
+        }
+      } elsewhen (burstCntr >= 8) {
+        when (burstCntr === 8) {   // sending internalNonce
           data.fragment := internalNonce(config.dataWidth-1 downto 0).asBits
         } elsewhen (burstCntr === 9) {   // sending internalNonce
           data.fragment := internalNonce(2*config.dataWidth-1 downto config.dataWidth).asBits
@@ -118,9 +122,27 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
         } elsewhen (burstCntr === 13) {   // sending outTag
           data.fragment := outTag(4*config.dataWidth-1 downto 3*config.dataWidth)
           last := True
-        } otherwise { // shouldn't go here
-          burstCntr.clear()
         }
+
+        // TODO: Are we doing little or big-endian for tag/nonce?
+//        when (burstCntr === 8) {   // sending internalNonce
+//          data.fragment := internalNonce(2*config.dataWidth-1 downto config.dataWidth).asBits
+//        } elsewhen (burstCntr === 9) {   // sending internalNonce
+//          data.fragment := internalNonce(config.dataWidth-1 downto 0).asBits
+//        } elsewhen (burstCntr === 10) {   // sending outTag
+//          data.fragment := outTag(4*config.dataWidth-1 downto 3*config.dataWidth)
+//        } elsewhen (burstCntr === 11) {   // sending outTag
+//          data.fragment := outTag(3*config.dataWidth-1 downto 2*config.dataWidth)
+//        } elsewhen (burstCntr === 12) {   // sending outTag
+//          data.fragment := outTag(2*config.dataWidth-1 downto config.dataWidth)
+//        } elsewhen (burstCntr === 13) {   // sending outTag
+//          data.fragment := outTag(config.dataWidth-1 downto 0)
+//          last := True
+//        }
+
+        outValid := True
+        readyForInput := False
+
       }
     }
 
@@ -128,7 +150,6 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
       when (io.in_datastream.fire) {
         // input data burst
         currData := io.in_datastream.data
-        readyForInput := False
 
         when (burstCntr === 0) { // nonce, lower bits
           externalNonce := B(0, config.dataWidth bits) ## currData.fragment
@@ -161,12 +182,19 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
           burstCntr.clear()
         }
 
+        when (burstCntr <= 5) {
+          burstCntr.increment()
+        } otherwise {
+          outValid := True
+          readyForInput := False
+        }
+
       } elsewhen (io.out_datastream.fire) {
-        outValid := True
-        readyForInput := True
         burstCntr.increment()
-        when (burstCntr.value > 13) {
-          burstCntr.clear()
+        outValid := False
+        readyForInput := True
+        when (burstCntr.willOverflowIfInc) {
+          inReady := True
         }
       }
     }
@@ -175,7 +203,6 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
       when (io.in_datastream.fire) {
         // input data burst
         currData := io.in_datastream.data
-        readyForInput := False
         
         when (burstCntr === 0) { // even, first one
           outTag := B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment)
@@ -183,17 +210,11 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
           lastData := currData
         } elsewhen (burstCntr.value < 8) { // even, sending data
           outTag := outTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment))
-        } 
+        }
 
-      } elsewhen (io.out_datastream.fire) { 
-        outValid := True
-        readyForInput := True
         burstCntr.increment()
-
-        when (burstCntr.value > 13) {
-          internalNonce := internalNonce + 1
-          burstCntr.clear()
-        } elsewhen (burstCntr === 8) {   // sending internalNonce
+      } elsewhen (burstCntr >= 8) {
+        when (burstCntr === 8) {   // sending internalNonce
           data.fragment := internalNonce(config.dataWidth-1 downto 0).asBits
         } elsewhen (burstCntr === 9) {   // sending internalNonce
           data.fragment := internalNonce(2*config.dataWidth-1 downto config.dataWidth).asBits
@@ -206,10 +227,20 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
         } elsewhen (burstCntr === 13) {   // sending outTag
           data.fragment := outTag(4*config.dataWidth-1 downto 3*config.dataWidth)
           last := True
-        } otherwise { // shouldn't go here
-          burstCntr.clear()
         }
-      }      
+        outValid := True
+        readyForInput := False
+
+        when (io.out_datastream.fire) {
+          burstCntr.increment()
+          outValid := False
+          when(burstCntr.willOverflowIfInc) {
+            internalNonce := internalNonce + 1
+            outValid := False
+            inReady := True
+          }
+        }
+      }
     }
 
     is (MACVERIFY){
