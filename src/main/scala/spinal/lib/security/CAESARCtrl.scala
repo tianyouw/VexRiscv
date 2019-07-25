@@ -27,22 +27,21 @@ case class CAESARCtrl(config : Axi4Config) extends Component {
   val key = UInt(128 bit) // TODO: we need a better way of getting the key
 
   val crypto = new CAESARInterface
-  val public_in_stream = master Stream(Bits(32 bits))
-  val secret_in_stream = master Stream(Bits(32 bits))
-  val crypto_out_stream = slave Stream(Bits(32 bits))
+  val public_in_stream = Stream(Bits(32 bits))
+  val secret_in_stream = Stream(Bits(32 bits))
+  val crypto_out_stream = Stream(Bits(32 bits))
 
-  // TODO: why the hell don't these compile?
-  crypto.io.pdi_valid := public_in_stream.valid
-  public_in_stream.ready := crypto.io.pdi_ready
-  crypto.io.pdi_data := public_in_stream.payload
+  crypto.io.pdi_valid <> public_in_stream.valid
+  public_in_stream.ready <> crypto.io.pdi_ready
+  crypto.io.pdi_data <> public_in_stream.payload
 
-  crypto.io.sdi_valid := secret_in_stream.valid
-  secret_in_stream.ready := crypto.io.sdi_ready
-  crypto.io.sdi_data := secret_in_stream.payload
+  crypto.io.sdi_valid <> secret_in_stream.valid
+  secret_in_stream.ready <> crypto.io.sdi_ready
+  crypto.io.sdi_data <> secret_in_stream.payload
 
-  crypto_out_stream.valid := crypto.io.do_valid
-  crypto.io.do_ready := crypto_out_stream.ready
-  crypto_out_stream.payload := crypto.io.do_data
+  crypto_out_stream.valid <> crypto.io.do_valid
+  crypto.io.do_ready <> crypto_out_stream.ready
+  crypto_out_stream.payload <> crypto.io.do_data
 
   val fsm = new StateMachine {
     val key_header = new State with EntryPoint {
