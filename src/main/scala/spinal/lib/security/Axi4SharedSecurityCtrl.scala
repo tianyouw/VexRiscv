@@ -53,7 +53,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   val decryptVerifyCounter = Counter(0 until 14)
   val pendingWordsCounter = Counter(0 until 8)
 
-  val caesarCtrl = CAESARCtrl(axiConfig)
+  val caesarCtrl = DummyCAESARCtrl(axiConfig)
 
 //  val sharedCmdReg = RegNextWhen(io.axi.sharedCmd, io.axi.sharedCmd.fire)
 
@@ -109,7 +109,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   def updateToNextParentNodeAddrReg(): Unit = {
     currentLevelStartAddrReg := getNextLevelStartAddr()
     currentAddrOffsetReg := getParentNodeAddrOffset()
-    currentNodeFirstSiblingStartAddrOffsetReg := getFirstSiblingStartAddr(getParentNodeAddrOffset())
+    currentNodeFirstSiblingStartAddrOffsetReg := getFirstSiblingStartAddr(getParentNodeAddrOffset()).resize(axiConfig.addressWidth)
   }
 
   def getCurrentTagNodeAddr(): UInt = {
@@ -131,19 +131,38 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   def isRootOfTree(): Bool = getCurrentTagNodeAddr() === 0x7FFFFFE8
 
   def getSiblingIndex(): UInt = {
-    val blockNum = currentAddrOffsetReg / 24
-    blockNum - ((blockNum - 1) & ~0x03) - 1
+    val blockNum = (currentAddrOffsetReg / 24)
+    val antimask = U(0x03, 27 bits)
+    (blockNum - ((blockNum - 1) & ~antimask) - 1).resize(2 bits)
   }
 
   dataInFifo.io.push.valid := False
   dataInFifo.io.push.payload.assignDontCare()
 
-  caesarCtrl.io.out_stream <> dataOutFifo.io.push
-  caesarCtrl.io.in_data_stream <> dataInFifo.io.pop
+  caesarCtrl.io.out_datastream <> dataOutFifo.io.push
+  caesarCtrl.io.in_datastream <> dataInFifo.io.pop
+  caesarCtrl.io.in_cmdstream.payload.assignDontCare()
+  caesarCtrl.io.in_cmdstream.valid := False
 
   dataOutFifo.io.pop.ready := False
 
   dataSetAsideFifo.io.push.valid := False
+  dataSetAsideFifo.io.push.payload.assignDontCare()
+  dataSetAsideFifo.io.pop.ready := False
+
+  nextNonceTagBlockFifo.io.push.valid := False
+  nextNonceTagBlockFifo.io.push.payload.assignDontCare()
+  nextNonceTagBlockFifo.io.pop.ready := False
+
+  val writeDataCompleteReg = RegInit(False)
+
+  val decryptStateReadDataReg = RegInit(False)
+
+  val writeDataStateDoneWritingReg = RegInit(False)
+
+  val calculateNewTagDataInFifoValidReg = RegInit(True)
+
+  val verifyTagStateReadCompleteReg = RegInit(False)
 
   when (busyReg || io.axi.sharedCmd.addr < 0x4000000) {
     dataOutFifo.io.pop.ready := io.sdramAxi.writeData.ready
@@ -190,7 +209,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
     io.sdramAxi.readRsp.ready := dataInFifo.io.push.ready
 
-    caesarCtrl.io.in_cmd_stream.valid := caesarInputCmdValidReg
+    caesarCtrl.io.in_cmdstream.valid := caesarInputCmdValidReg
 
     val fsm = new StateMachine {
       val idleState: State = new State with EntryPoint {
@@ -203,10 +222,14 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           when(io.axi.sharedCmd.fire) {
             busyReg := True
             axiSharedCmdReg := io.axi.sharedCmd
-
+            writeDataCompleteReg := False
+            decryptStateReadDataReg := False
+            writeDataStateDoneWritingReg := False
+            calculateNewTagDataInFifoValidReg := True
+            verifyTagStateReadCompleteReg := False
             currentLevelStartAddrReg := 0x4000000
-            currentAddrOffsetReg := io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5).resize(axiConfig.addressWidth) * 0xC
-            currentNodeFirstSiblingStartAddrOffsetReg := getFirstSiblingStartAddr(io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5).resize(axiConfig.addressWidth) * 0xC)
+            currentAddrOffsetReg := (io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) * 0xC).resize(axiConfig.addressWidth)
+            currentNodeFirstSiblingStartAddrOffsetReg := getFirstSiblingStartAddr(io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) * 0xC).resize(axiConfig.addressWidth)
 
             // For the read case, go directly to read state
             when(!io.axi.sharedCmd.write) {
@@ -234,72 +257,74 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
       }
 
       val verifyTagFromSdramState: State = new State {
-        val readComplete = RegInit(False)
-        val writeDataComplete = RegInit(False)
-        io.sdramAxi.writeData.valid := False
-        caesarCtrl.io.in_cmd_stream.mode := caesarCtrl.macVerMode
-        caesarCtrl.io.out_stream.ready := readComplete
+        whenIsActive {
+          io.sdramAxi.writeData.valid := False
+          caesarCtrl.io.in_cmdstream.mode := caesarCtrl.MACVERIFY
+          caesarCtrl.io.out_datastream.ready := verifyTagStateReadCompleteReg
 
-        when (decryptVerifyCounter.value < 8) {
-          io.sdramAxi.sharedCmd.addr := getCurrentTagNodeFirstSiblingAddr() + (decryptVerifyCounter << 2)
-          io.sdramAxi.sharedCmd.len := 1 // Burst of 2, since 64 bit nonces
-        } otherwise {
-          io.sdramAxi.sharedCmd.addr := getParentNodeAddr()
-          io.sdramAxi.sharedCmd.len := 5 // Burst of 6, since 128 bit tag + 64 bit nonce
-        }
-
-        when(io.sdramAxi.sharedCmd.fire) {
-          sdramAxiSharedCmdValidReg := False
-        }
-
-        when(caesarCtrl.io.in_cmd_stream.fire) {
-          caesarInputCmdValidReg := False
-        }
-
-        dataInFifo.io.push.payload.data.last := io.sdramAxi.readRsp.fire && io.sdramAxi.readRsp.last && decryptVerifyCounter.willOverflowIfInc
-
-        dataInFifo.io.push.valid := io.sdramAxi.readRsp.valid
-        dataInFifo.io.push.payload.data.fragment := io.sdramAxi.readRsp.data
-
-        when(io.sdramAxi.readRsp.fire) {
           when(decryptVerifyCounter.value < 8) {
-            nonceVecReg(decryptVerifyCounter.value) := io.sdramAxi.readRsp.data
-          }
-
-          when(io.sdramAxi.readRsp.last) {
-            when(decryptVerifyCounter.willOverflowIfInc) {
-              readComplete := True
-            } otherwise {
-              sdramAxiSharedCmdValidReg := True
-              decryptVerifyCounter.increment()
-            }
+            io.sdramAxi.sharedCmd.addr := getCurrentTagNodeFirstSiblingAddr() + (decryptVerifyCounter << 2)
+            io.sdramAxi.sharedCmd.len := 1 // Burst of 2, since 64 bit nonces
           } otherwise {
-            decryptVerifyCounter.increment()
+            io.sdramAxi.sharedCmd.addr := getParentNodeAddr()
+            io.sdramAxi.sharedCmd.len := 5 // Burst of 6, since 128 bit tag + 64 bit nonce
           }
-        }
 
-        when (caesarCtrl.io.out_stream.fire && !caesarCtrl.io.out_stream.error) {
-          when(axiSharedCmdReg.write) {
-            sdramAxiSharedCmdValidReg := True
-            decryptVerifyCounter := 0
-            when(!writeDataComplete) {
-              goto(decryptDataState)
-            } otherwise {
-              when(isRootOfTree()) {
-                busyReg := False
-                goto(idleState)
+          when(io.sdramAxi.sharedCmd.fire) {
+            sdramAxiSharedCmdValidReg := False
+          }
+
+          when(caesarCtrl.io.in_cmdstream.fire) {
+            caesarInputCmdValidReg := False
+          }
+
+          dataInFifo.io.push.payload.data.last := io.sdramAxi.readRsp.fire && io.sdramAxi.readRsp.last && decryptVerifyCounter.willOverflowIfInc
+
+          dataInFifo.io.push.valid := io.sdramAxi.readRsp.valid
+          dataInFifo.io.push.payload.data.fragment := io.sdramAxi.readRsp.data
+
+          when(io.sdramAxi.readRsp.fire) {
+            when(decryptVerifyCounter.value < 8) {
+              nonceVecReg(decryptVerifyCounter.value(2 downto 0)) := io.sdramAxi.readRsp.data
+            }
+
+            when(io.sdramAxi.readRsp.last) {
+              when(decryptVerifyCounter.willOverflowIfInc) {
+                verifyTagStateReadCompleteReg := True
               } otherwise {
                 sdramAxiSharedCmdValidReg := True
-                sdramWrEnReg := True
-                goto(writeNewTagState)
+                decryptVerifyCounter.increment()
               }
-            }
-          } otherwise {
-            when (isRootOfTree()) {
-              goto(decryptDataState)
             } otherwise {
+              decryptVerifyCounter.increment()
+            }
+          }
+
+          when(caesarCtrl.io.out_datastream.fire && !caesarCtrl.io.out_datastream.error) {
+            when(axiSharedCmdReg.write) {
+              sdramAxiSharedCmdValidReg := True
               decryptVerifyCounter := 0
-              updateToNextParentNodeAddrReg()
+
+              when(!writeDataCompleteReg) {
+                writeDataCompleteReg := True
+                goto(decryptDataState)
+              } otherwise {
+                when(isRootOfTree()) {
+                  busyReg := False
+                  goto(idleState)
+                } otherwise {
+                  sdramAxiSharedCmdValidReg := True
+                  sdramWrEnReg := True
+                  goto(writeNewTagState)
+                }
+              }
+            } otherwise {
+              when(isRootOfTree()) {
+                goto(decryptDataState)
+              } otherwise {
+                decryptVerifyCounter := 0
+                updateToNextParentNodeAddrReg()
+              }
             }
           }
         }
@@ -310,16 +335,15 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
       }
 
       val decryptDataState: State = new State {
-        val isReadingTagReg = RegInit(True)
         //    onEntry(pendingWordsCounter := 0)
         whenIsActive {
-          caesarCtrl.io.in_cmd_stream.mode := caesarCtrl.decMode
+          caesarCtrl.io.in_cmdstream.mode := caesarCtrl.DECRYPT
 
           when(io.sdramAxi.sharedCmd.fire) {
             sdramAxiSharedCmdValidReg := False
           }
 
-          when(isReadingTagReg) {
+          when(!decryptStateReadDataReg) {
             io.sdramAxi.sharedCmd.addr := getCurrentTagNodeAddr()
             io.sdramAxi.sharedCmd.len := 5 // 6 * 32 == 192 bits, which is the leaf node size
           } otherwise {
@@ -327,7 +351,6 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
             io.sdramAxi.sharedCmd.len := 7 // 8 * 32 == 256 bits, AKA length of a cache line
           }
 
-          caesarCtrl.io.in_cmd_stream.mode := caesarCtrl.encMode
           io.sdramAxi.writeData.valid := False
           //          val axiSharedCmd = cloneOf(io.axi.sharedCmd)
           //
@@ -337,7 +360,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           //
           //          io.sdramAxi.sharedCmd <> axiSharedCmd
 
-          dataInFifo.io.push.payload.data.last := io.sdramAxi.readRsp.last && isReadingTagReg
+          dataInFifo.io.push.payload.data.last := io.sdramAxi.readRsp.last && decryptStateReadDataReg
           dataInFifo.io.push.valid := io.sdramAxi.readRsp.valid
           //          when(axiSharedCmdReg.write && pendingWordsCounter.value === bytePosition(axiSharedCmdReg.addr)) {
           //            dataInFifo.io.push.payload.fragment := combineNewDataWithOriginal(io.sdramAxi.readRsp.data, dataReg, strbReg)
@@ -351,8 +374,13 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           dataOutFifo.io.pop.ready := dataSetAsideFifo.io.push.ready
 
           when(dataInFifo.io.push.ready && io.sdramAxi.readRsp.fire && io.sdramAxi.readRsp.last) {
-            isReadingTagReg := False
-            when(!isReadingTagReg) {
+            decryptStateReadDataReg := True
+
+            when (!decryptStateReadDataReg) {
+              sdramAxiSharedCmdValidReg := True
+            }
+
+            when(decryptStateReadDataReg && dataSetAsideFifo.io.push.fire && dataSetAsideFifo.io.push.last) {
               when(axiSharedCmdReg.write) {
                 caesarInputCmdValidReg := True
                 goto(encryptDataState)
@@ -368,7 +396,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
       val encryptDataState: State = new State {
         whenIsActive {
-          caesarCtrl.io.in_cmd_stream.mode := caesarCtrl.encMode
+          caesarCtrl.io.in_cmdstream.mode := caesarCtrl.ENCRYPT
 
           dataInFifo.io.push.valid := dataSetAsideFifo.io.pop.valid
           dataSetAsideFifo.io.pop.ready := dataInFifo.io.push.ready
@@ -399,13 +427,12 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
       }
 
       val writeDataState: State = new State {
-        val doneWritingData = RegInit(False)
         whenIsActive {
           when(io.sdramAxi.sharedCmd.fire) {
             sdramAxiSharedCmdValidReg := False
           }
 
-          when(caesarCtrl.io.in_cmd_stream.fire) {
+          when(caesarCtrl.io.in_cmdstream.fire) {
             caesarInputCmdValidReg := False
           }
 
@@ -413,7 +440,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           io.sdramAxi.sharedCmd.len := 7 // 8 data bursts
           io.sdramAxi.writeData.last := pendingWordsCounter.willOverflowIfInc
 
-          io.sdramAxi.writeData.valid := !pendingWordsCounter.willOverflow && !doneWritingData && dataOutFifo.io.pop.valid && sdramWrEnReg
+          io.sdramAxi.writeData.valid := !writeDataStateDoneWritingReg && dataOutFifo.io.pop.valid && sdramWrEnReg
           //          otherwise {
           //            io.sdramAxi.writeData.strb := "1111"
           //          }
@@ -421,11 +448,11 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           when (io.sdramAxi.writeData.fire) {
             pendingWordsCounter.increment()
             when (pendingWordsCounter.willOverflowIfInc) {
-              doneWritingData := True
+              writeDataStateDoneWritingReg := True
             }
           }
 
-          when (doneWritingData) {
+          when (writeDataStateDoneWritingReg) {
             nextNonceTagBlockFifo.io.push.valid := dataOutFifo.io.pop.valid
             nextNonceTagBlockFifo.io.push.payload := dataOutFifo.io.pop.data
             dataOutFifo.io.pop.ready := nextNonceTagBlockFifo.io.push.ready
@@ -462,15 +489,15 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
           when(io.sdramAxi.writeData.fire) {
             when (pendingWordsCounter.value === 0 || pendingWordsCounter.value === 1) {
-              tempNonceReg(pendingWordsCounter.value) := nextNonceTagBlockFifo.io.pop.payload.fragment
+              tempNonceReg(pendingWordsCounter.value(0 downto 0)) := nextNonceTagBlockFifo.io.pop.payload.fragment
             }
             pendingWordsCounter.increment()
           }
 
           when(io.sdramAxi.writeRsp.fire) {
             val index = getSiblingIndex()
-            nonceVecReg(index << 1) := tempNonceReg(0)
-            nonceVecReg(index << 1 + 1) := tempNonceReg(1)
+            nonceVecReg((index << 1)(2 downto 0)) := tempNonceReg(0)
+            nonceVecReg((index << 1 + 1)(2 downto 0)) := tempNonceReg(1)
             caesarInputCmdValidReg := True
             goto(calculateNewTagState)
             //            pendingWordsCounter.increment()
@@ -486,31 +513,31 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
       }
 
       val calculateNewTagState: State = new State {
-        val dataInFifoValidReg = RegInit(True)
+
         whenIsActive {
-          when (caesarCtrl.io.in_cmd_stream.fire) {
+          when (caesarCtrl.io.in_cmdstream.fire) {
             caesarInputCmdValidReg := False
           }
 
           dataInFifo.io.push.data.fragment := nonceVecReg(pendingWordsCounter)
           dataInFifo.io.push.data.last := pendingWordsCounter.willOverflowIfInc
-          dataInFifo.io.push.valid := dataInFifoValidReg
+          dataInFifo.io.push.valid := calculateNewTagDataInFifoValidReg
 
-          caesarCtrl.io.in_cmd_stream.mode := caesarCtrl.macGenMode
+          caesarCtrl.io.in_cmdstream.mode := caesarCtrl.MACGEN
 
           when (dataInFifo.io.push.fire) {
             pendingWordsCounter.increment()
 
             when (pendingWordsCounter.willOverflowIfInc) {
-              dataInFifoValidReg := False
+              calculateNewTagDataInFifoValidReg := False
             }
           }
 
-          nextNonceTagBlockFifo.io.push.valid := caesarCtrl.io.out_stream.valid
-          nextNonceTagBlockFifo.io.push.payload := caesarCtrl.io.out_stream.data
-          caesarCtrl.io.out_stream.ready := nextNonceTagBlockFifo.io.push.ready
+          nextNonceTagBlockFifo.io.push.valid := caesarCtrl.io.out_datastream.valid
+          nextNonceTagBlockFifo.io.push.payload := caesarCtrl.io.out_datastream.data
+          caesarCtrl.io.out_datastream.ready := nextNonceTagBlockFifo.io.push.ready
 
-          when (caesarCtrl.io.out_stream.fire && caesarCtrl.io.out_stream.data.last && !caesarCtrl.io.out_stream.error) {
+          when (caesarCtrl.io.out_datastream.fire && caesarCtrl.io.out_datastream.data.last && !caesarCtrl.io.out_datastream.error) {
             sdramAxiSharedCmdValidReg := True
             caesarInputCmdValidReg := True
             updateToNextParentNodeAddrReg()
@@ -521,9 +548,9 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
       // State for returning data to dcache
       val returnDataState: State = new State {
         whenIsActive {
-          io.axi.readRsp.valid := dataOutFifo.io.pop.valid
-          io.axi.readRsp.data := dataOutFifo.io.pop.payload.fragment
-          io.axi.readRsp.last := dataOutFifo.io.pop.payload.last
+          io.axi.readRsp.valid := dataSetAsideFifo.io.pop.valid
+          io.axi.readRsp.data := dataSetAsideFifo.io.pop.payload.fragment
+          io.axi.readRsp.last := dataSetAsideFifo.io.pop.payload.last
           io.axi.readRsp.id := axiSharedCmdReg.id
           io.axi.readRsp.setOKAY()
 
