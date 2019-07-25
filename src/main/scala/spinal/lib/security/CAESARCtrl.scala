@@ -168,13 +168,86 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
         }
       }
     }
+    
+    is (MACGEN){  
+      when (io.in_datastream.fire) {
+        // input data burst
+        currData := io.in_datastream.data
+        readyForInput := False
+        
+        when (burstCntr === 0) { // even, first one
+          outTag := B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment)
+        } elsewhen ((burstCntr.value % 2 === 1) && (burstCntr.value < 8)) { // odd, sending data
+          lastData := currData
+        } elsewhen (burstCntr.value < 8) { // even, sending data
+          outTag := outTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment))
+        } 
 
-    is (MACGEN){
+      } elsewhen (io.out_datastream.fire) { 
+        outValid := True
+        readyForInput := True
+        burstCntr.increment()
 
+        when (burstCntr.value > 13) {
+          internalNonce := internalNonce + 1
+          burstCntr.clear()
+        } elsewhen (burstCntr === 8) {   // sending internalNonce
+          data.fragment := internalNonce(config.dataWidth-1 downto 0).asBits
+        } elsewhen (burstCntr === 9) {   // sending internalNonce
+          data.fragment := internalNonce(2*config.dataWidth-1 downto config.dataWidth).asBits
+        } elsewhen (burstCntr === 10) {   // sending outTag
+          data.fragment := outTag(config.dataWidth-1 downto 0)
+        } elsewhen (burstCntr === 11) {   // sending outTag
+          data.fragment := outTag(2*config.dataWidth-1 downto config.dataWidth)
+        } elsewhen (burstCntr === 12) {   // sending outTag
+          data.fragment := outTag(3*config.dataWidth-1 downto 2*config.dataWidth)
+        } elsewhen (burstCntr === 13) {   // sending outTag
+          data.fragment := outTag(4*config.dataWidth-1 downto 3*config.dataWidth)
+          last := True
+        } otherwise { // shouldn't go here
+          burstCntr.clear()
+        }
+      }      
     }
 
     is (MACVERIFY){
+      when (io.in_datastream.fire) {
+        // input data burst
+        currData := io.in_datastream.data
+        readyForInput := False
+        
+        when (burstCntr === 0) { // even, first one
+          outTag := B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment)
+        } elsewhen ((burstCntr.value % 2 === 1) && (burstCntr.value < 8)) { // odd, sending data
+          lastData := currData
+        } elsewhen (burstCntr.value < 8) { // even, sending data
+          outTag := outTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment))
+        } elsewhen (burstCntr.value < 11) {
+          inTag := currData.fragment ## B(0, 128 - config.dataWidth bits) 
+        } elsewhen (burstCntr === 11) {
+          inTag := inTag.rotateRight(32) | (B(0, 128 - config.dataWidth bits) ## currData.fragment)
+          data.fragment := currData.fragment    // don't care what you output
+          last := True
 
+          when (outTag =/= inTag) {
+            error := True
+          }        
+        } elsewhen (burstCntr === 12) {
+          externalNonce := B(0, config.dataWidth bits) ## currData.fragment
+        } elsewhen (burstCntr === 13) {
+          externalNonce := externalNonce | (currData.fragment ## B(0, config.dataWidth bits))
+        } otherwise { // shouldn't go here
+          burstCntr.clear()
+        }
+
+      } elsewhen (io.out_datastream.fire) {
+        outValid := True
+        readyForInput := True
+        burstCntr.increment()
+        when (burstCntr.value > 13) {
+          burstCntr.clear()
+        }
+      }
     }
 
     default{
