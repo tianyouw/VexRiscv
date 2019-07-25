@@ -103,7 +103,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   val caesarInputCmdValidReg = RegInit(False)
 
 
-
+  def bytesToBits(bytes: Int): Int = bytes * 8
 
   def bytePosition(addr: UInt) : UInt = addr(4 downto 2)
 
@@ -137,7 +137,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
 //  // Assuming 4-ary for now
 //  def getTreeLeafNodeTagAddress(originalAddr: UInt): UInt = {
-//    0x4000000 + (originalAddr(axiConfig.addressWidth - 1 downto 5).resize(axiConfig.addressWidth) * 12)
+//    treeStart + (originalAddr(axiConfig.addressWidth - 1 downto 5).resize(axiConfig.addressWidth) * 12)
 //  }
 //
   def updateToNextParentNodeAddrReg(): Unit = {
@@ -153,18 +153,19 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     (currentLevelStartAddr + getFirstSiblingAddrOffset(currentAddrOffsetReg)).resize(axiConfig.addressWidth)
   }
 //
-  def getFirstSiblingAddrOffset(addr: UInt): UInt = (addr / 0x60) * 0x60
+  val sizeOfSiblings = blockSizeBytes * treeAry
+  def getFirstSiblingAddrOffset(addr: UInt): UInt = (addr / sizeOfSiblings) * sizeOfSiblings
 //
 //
-  def getParentNodeAddrOffset() : UInt = ((currentAddrOffsetReg / 0x60) * 0x18).resize(axiConfig.addressWidth)
+  def getParentNodeAddrOffset() : UInt = ((currentAddrOffsetReg / sizeOfSiblings) * blockSizeBytes).resize(axiConfig.addressWidth)
 //
   def getParentNodeAddr(): UInt = (layerAddressVec(layerIndexReg - 1) + getParentNodeAddrOffset()).resize(axiConfig.addressWidth)
 //
   def isRootOfTree(): Bool = getCurrentTagNodeAddr() === treeStart
 
   def getSiblingIndex(): UInt = {
-    val blockNum = (currentAddrOffsetReg / 24)
-    val antimask = U(0x03, 27 bits)
+    val blockNum = (currentAddrOffsetReg / blockSizeBytes)
+    val antimask = U(0x03, 27 bits) // This constant comes from Spinal's complaining
     (blockNum - ((blockNum - 1) & ~antimask) - 1).resize(2 bits)
   }
 
@@ -196,7 +197,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
   val verifyTagStateReadCompleteReg = RegInit(False)
 
-  when (busyReg || io.axi.sharedCmd.addr < 0x4000000) {
+  when (busyReg || io.axi.sharedCmd.addr < treeStart) {
     dataOutFifo.io.pop.ready := io.sdramAxi.writeData.ready
 
 
@@ -265,8 +266,8 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
             verifyTagStateReadCompleteReg := False
 
             layerIndexReg := numLayers - 1
-//            currentLevelStartAddrReg := 0x4000000
-            currentAddrOffsetReg := (io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) * 24)
+//            currentLevelStartAddrReg := treeStart
+            currentAddrOffsetReg := (io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) * blockSizeBytes)
 //            currentNodeFirstSiblingStartAddrOffsetReg := getFirstSiblingAddrOffset(io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) * 0xC).resize(axiConfig.addressWidth)
 
             // For the read case, go directly to read state
