@@ -38,12 +38,12 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
   def NOP : Bits = "100"
   final val burstLen : UInt = 8
 
-  val readyForInput = RegInit(True)
+  val readyForInput = RegInit(False)
   // val last = RegInit(False)
   val outTag = Reg(Bits(128 bits))
   val inTag = Reg(Bits(128 bits))
   val data = Reg(Fragment(Bits(config.dataWidth bits)))
-  val currData = Reg(Fragment(Bits(config.dataWidth bits)))
+  val currData = Fragment(Bits(config.dataWidth bits))
   val lastData = Reg(Fragment(Bits(config.dataWidth bits)))
   val burstCntr = Counter(0 until 14)
   val last = Bool()
@@ -63,7 +63,7 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
   // val dataBurst = Reg(Array[Bits(config.dataWidth bits)](burstLen/2))
   // io.in_datastream.ready := readyForInput
   io.in_cmdstream.ready := inReady
-  io.in_datastream.ready := inReady
+  io.in_datastream.ready := readyForInput
   io.out_datastream.data := data
   io.out_datastream.error := error
   io.out_datastream.valid := outValid
@@ -77,7 +77,9 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
     mode := io.in_cmdstream.mode
     burstCntr.clear()
     inReady := False
+    readyForInput := True
   }
+  currData.assignDontCare()
 
   switch(mode) {
     is(ENCRYPT){
@@ -214,7 +216,7 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
       when (io.in_datastream.fire) {
         // input data burst
         currData := io.in_datastream.data
-        readyForInput := False
+//        readyForInput := False
         
         when (burstCntr === 0) { // even, first one
           outTag := B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment)
@@ -240,13 +242,17 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
           burstCntr.clear()
         }
 
-      } elsewhen (io.out_datastream.fire) {
-        outValid := True
-        readyForInput := True
-        burstCntr.increment()
-        when (burstCntr.value > 13) {
-          burstCntr.clear()
+        when (burstCntr.willOverflowIfInc) {
+          outValid := True
+          readyForInput := False
+        } otherwise {
+          burstCntr.increment()
         }
+
+      } elsewhen (io.out_datastream.fire) {
+        outValid := False
+        inReady := True
+        burstCntr.clear()
       }
     }
 
