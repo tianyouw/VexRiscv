@@ -45,7 +45,7 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
   val data = Reg(Fragment(Bits(config.dataWidth bits)))
   val currData = Fragment(Bits(config.dataWidth bits))
   val lastData = Reg(Fragment(Bits(config.dataWidth bits)))
-  val burstCntr = Counter(0 until 14)
+  val burstCntr = Counter(0 until 16)
   val last = Bool()
 
 
@@ -56,8 +56,8 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
   val inReady = RegInit(True)
 
   // val nonce = Reg(Bits(config.dataWidth bits)) init(1)
-  val internalNonce = Reg(UInt(2*config.dataWidth bits)) init(1)
-  val externalNonce = Reg(Bits(2*config.dataWidth bits)) init(0)
+  val internalNonce = Reg(UInt(4*config.dataWidth bits)) init(1)
+  val externalNonce = Reg(Bits(4*config.dataWidth bits)) init(0)
   val error = Bool()
 
   // val dataBurst = Reg(Array[Bits(config.dataWidth bits)](burstLen/2))
@@ -110,16 +110,20 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
         }
       } elsewhen (burstCntr >= 8) {
         when (burstCntr === 8) {   // sending internalNonce
+          data.fragment := internalNonce(4*config.dataWidth-1 downto 3*config.dataWidth).asBits
+        } elsewhen (burstCntr === 9) {   // sending internalNonce
+          data.fragment := internalNonce(3*config.dataWidth-1 downto 2*config.dataWidth).asBits
+        } elsewhen (burstCntr === 10) {   // sending internalNonce
           data.fragment := internalNonce(2*config.dataWidth-1 downto config.dataWidth).asBits
-        } elsewhen (burstCntr === 9) {   // sending internalNonce, lower bits
+        } elsewhen (burstCntr === 11) {   // sending internalNonce
           data.fragment := internalNonce(config.dataWidth-1 downto 0).asBits
-        } elsewhen (burstCntr === 10) {   // sending outTag
-          data.fragment := outTag(4*config.dataWidth-1 downto 3*config.dataWidth)
-        } elsewhen (burstCntr === 11) {   // sending outTag
-          data.fragment := outTag(3*config.dataWidth-1 downto 2*config.dataWidth)
         } elsewhen (burstCntr === 12) {   // sending outTag
-          data.fragment := outTag(2*config.dataWidth-1 downto config.dataWidth) 
+          data.fragment := outTag(4*config.dataWidth-1 downto 3*config.dataWidth)
         } elsewhen (burstCntr === 13) {   // sending outTag
+          data.fragment := outTag(3*config.dataWidth-1 downto 2*config.dataWidth)
+        } elsewhen (burstCntr === 14) {   // sending outTag
+          data.fragment := outTag(2*config.dataWidth-1 downto config.dataWidth) 
+        } elsewhen (burstCntr === 15) {   // sending outTag
           data.fragment := outTag(config.dataWidth-1 downto 0)
           last := True
         }
@@ -135,15 +139,15 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
         // input data burst
         currData := io.in_datastream.data
 
-        when (burstCntr === 0) { // nonce, upper bits
-          externalNonce := currData.fragment ## B(0, config.dataWidth bits)
-        } elsewhen (burstCntr === 1) { // nonce, lower bits
-          externalNonce := externalNonce | (B(0, config.dataWidth bits) ## currData.fragment)
-        } elsewhen (burstCntr === 2) { // tag
+        when (burstCntr === 0) { // nonce
+          externalNonce := B(0, 128 - config.dataWidth bits) ## currData.fragment
+        } elsewhen (burstCntr < 4) { // nonce
+          externalNonce := externalNonce.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## currData.fragment)
+        } elsewhen (burstCntr === 4) { // tag
           inTag := B(0, 128 - config.dataWidth bits) ## currData.fragment
-        } elsewhen (burstCntr.value < 6) {   // tag
+        } elsewhen (burstCntr.value < 8) {   // tag
           inTag := inTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## currData.fragment)
-        } elsewhen (burstCntr.value < 13) {   // decrypt ciphered data, generate tag
+        } elsewhen (burstCntr.value < 15) {   // decrypt ciphered data, generate tag
           when (burstCntr.value % 2 === 0) {
             lastData := currData
           } elsewhen (burstCntr === 7) {
@@ -154,7 +158,7 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
 
           data.fragment := currData.fragment ^ externalNonce(config.dataWidth-1 downto 0)
 
-        } elsewhen (burstCntr === 13) {   // last one
+        } elsewhen (burstCntr === 15) {   // last one
           data.fragment := currData.fragment ^ externalNonce(config.dataWidth-1 downto 0).asBits
           last := True
 
@@ -199,16 +203,20 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
         burstCntr.increment()
       } elsewhen (burstCntr >= 8) {
         when (burstCntr === 8) {   // sending internalNonce
-          data.fragment := internalNonce(2*config.dataWidth-1 downto config.dataWidth).asBits
+          data.fragment := internalNonce(4*config.dataWidth-1 downto 3*config.dataWidth).asBits
         } elsewhen (burstCntr === 9) {   // sending internalNonce
+          data.fragment := internalNonce(3*config.dataWidth-1 downto 2*config.dataWidth).asBits
+        } elsewhen (burstCntr === 10) {   // sending internalNonce
+          data.fragment := internalNonce(2*config.dataWidth-1 downto config.dataWidth).asBits
+        } elsewhen (burstCntr === 11) {   // sending internalNonce
           data.fragment := internalNonce(config.dataWidth-1 downto 0).asBits
-        } elsewhen (burstCntr === 10) {   // sending outTag
-          data.fragment := outTag(4*config.dataWidth-1 downto 3*config.dataWidth)
-        } elsewhen (burstCntr === 11) {   // sending outTag
-          data.fragment := outTag(3*config.dataWidth-1 downto 2*config.dataWidth)
         } elsewhen (burstCntr === 12) {   // sending outTag
-          data.fragment := outTag(2*config.dataWidth-1 downto config.dataWidth)
+          data.fragment := outTag(4*config.dataWidth-1 downto 3*config.dataWidth)
         } elsewhen (burstCntr === 13) {   // sending outTag
+          data.fragment := outTag(3*config.dataWidth-1 downto 2*config.dataWidth)
+        } elsewhen (burstCntr === 14) {   // sending outTag
+          data.fragment := outTag(2*config.dataWidth-1 downto config.dataWidth)
+        } elsewhen (burstCntr === 15) {   // sending outTag
           data.fragment := outTag(config.dataWidth-1 downto 0)
           last := True
         }
@@ -251,10 +259,10 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
           when (outTag =/= inTag) {
             error := True
           }        
-        } elsewhen (burstCntr === 12) {   // get upper bits of nonce
-          externalNonce := currData.fragment ## B(0, config.dataWidth bits)
-        } elsewhen (burstCntr === 13) {   // get lower bits of nonce
-          externalNonce := externalNonce | (B(0, config.dataWidth bits) ## currData.fragment)
+        } elsewhen (burstCntr === 12) {   // get first 32 bits of nonce
+          externalNonce := B(0, 128 - config.dataWidth bits) ## currData.fragment
+        } elsewhen (burstCntr < 16) {   // get rest of nonce
+          externalNonce := externalNonce.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## currData.fragment)
         } otherwise { // shouldn't go here
           burstCntr.clear()
         }

@@ -35,7 +35,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   final val treeAry = 4
   final val treeStart = 0x2000000 // TODO: andrew, replace this with whatever you want
   final val memorySizeBytes = 32 * 1024 * 1024 // TODO: andrew, get this from somewhere else?
-  final val blockSizeBytes = 24
+  final val blockSizeBytes = 32 //24
 
 //  def getParent(block: Int) = (block - 1) / treeAry
   def getChild(block: Int, childNum: Int) = treeAry * block + childNum + 1
@@ -80,12 +80,12 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
   val debugFsmState = RegInit(U(0, 3 bits))
   val layerIndexReg = RegInit(U(numLayers))
-  // Data = 8 bytes, tag = 4 bytes, nonce = 2 bytes
-  val dataInFifo = StreamFifo(dataType = CAESARCtrlInData(axiConfig), depth = 14)
-  val dataOutFifo = StreamFifo(dataType = CAESARCtrlOutData(axiConfig), depth = 14)
+  // Data = 8 bytes, tag = 4 bytes, nonce = 4 bytes
+  val dataInFifo = StreamFifo(dataType = CAESARCtrlInData(axiConfig), depth = 16)
+  val dataOutFifo = StreamFifo(dataType = CAESARCtrlOutData(axiConfig), depth = 16)
 
   val dataSetAsideFifo = StreamFifo(dataType = Fragment(Bits(axiDataWidth bits)), depth = 8)
-  val nextNonceTagBlockFifo = StreamFifo(dataType = Fragment(Bits(axiConfig.dataWidth bits)), depth = 6)
+  val nextNonceTagBlockFifo = StreamFifo(dataType = Fragment(Bits(axiConfig.dataWidth bits)), depth = 8)
 
   // Tree address registers
 //  val currentNodeFirstSiblingStartAddrOffsetReg = Reg(UInt(axiConfig.addressWidth bits))
@@ -211,7 +211,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
   val verifyTagStateReadCompleteReg = RegInit(False)
 
-  val tempNonceReg = Vec(Reg(Bits(axiConfig.dataWidth bits)), 2)
+  val tempNonceReg = Vec(Reg(Bits(axiConfig.dataWidth bits)), 4)
 
 //  when (io.axi.sharedCmd.addr >= treeStart && !busyReg) {
 //    // Accessing tree section; bypass and let it through directly
@@ -343,10 +343,10 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
           when(decryptVerifyCounter.value < 8) {
             io.sdramAxi.sharedCmd.addr := getCurrentTagNodeFirstSiblingAddr() + (decryptVerifyCounter << 2)
-            io.sdramAxi.sharedCmd.len := 1 // Burst of 2, since 64 bit nonces
+            io.sdramAxi.sharedCmd.len := 3 // Burst of 4, since 128 bit nonces
           } otherwise {
             io.sdramAxi.sharedCmd.addr := getParentNodeAddr()
-            io.sdramAxi.sharedCmd.len := 5 // Burst of 6, since 128 bit tag + 64 bit nonce
+            io.sdramAxi.sharedCmd.len := 7 // Burst of 8, since 128 bit tag + 128 bit nonce
           }
 
           when(io.sdramAxi.sharedCmd.fire) {
@@ -580,7 +580,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
           when(io.sdramAxi.writeData.fire) {
             when (pendingWordsCounter.value === 0 || pendingWordsCounter.value === 1) {
-              tempNonceReg(pendingWordsCounter.value(0 downto 0)) := nextNonceTagBlockFifo.io.pop.payload.fragment
+              tempNonceReg(pendingWordsCounter.value(1 downto 0)) := nextNonceTagBlockFifo.io.pop.payload.fragment
             }
             pendingWordsCounter.increment()
           }
