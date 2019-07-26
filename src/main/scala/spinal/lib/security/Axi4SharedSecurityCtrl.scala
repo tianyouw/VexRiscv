@@ -95,10 +95,11 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   val currentLevelStartAddr = UInt(axiConfig.addressWidth bits)
   currentLevelStartAddr := layerAddressVec(layerIndexReg)
 
-  val nonceVecReg = Vec(Reg(Bits(axiConfig.dataWidth bits)), 8)
+  val nonceVecReg = Vec(Reg(Bits(axiConfig.dataWidth bits)), 16)
 
-  val decryptVerifyCounter = Counter(0 until 14)
+  val decryptVerifyCounter = Counter(0 until 24)
   val pendingWordsCounter = Counter(0 until 8)
+  val pendingNonceCounter = Counter(0 until 16)
 
   val caesarCtrl = DummyCAESARCtrl(axiConfig)
 
@@ -166,10 +167,14 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     (currentLevelStartAddr + getFirstSiblingAddrOffset(currentAddrOffsetReg)).resize(axiConfig.addressWidth)
   }
 //
-  def getFirstSiblingAddrOffset(addr: UInt): UInt = (addr / 0x60) * 0x60
+  def getFirstSiblingAddrOffset(addr: UInt): UInt = {
+    val out = addr
+    out(7 downto 0) := 0
+    out
+  }
 //
 //
-  def getParentNodeAddrOffset() : UInt = ((((currentAddrOffsetReg / 24) - 1) >> 2) * 24).resize(axiConfig.addressWidth)
+  def getParentNodeAddrOffset() : UInt = ((((currentAddrOffsetReg >> 5) - 1) >> 2) << 5).resize(axiConfig.addressWidth)
 //
   def getParentNodeAddr(): UInt = (layerAddressVec(layerIndexReg - 1) + getParentNodeAddrOffset()).resize(axiConfig.addressWidth)
 //
@@ -207,7 +212,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
   val writeDataStateDoneWritingReg = RegInit(False)
 
-  val calculateNewTagDataInFifoValidReg = RegInit(True)
+  val calculateNewTagStateDataInFifoValidReg = RegInit(True)
 
   val verifyTagStateReadCompleteReg = RegInit(False)
 
@@ -284,12 +289,12 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
               writeDataCompleteReg := False
               decryptStateReadDataReg := False
               writeDataStateDoneWritingReg := False
-              calculateNewTagDataInFifoValidReg := True
+              calculateNewTagStateDataInFifoValidReg := True
               verifyTagStateReadCompleteReg := False
 
               layerIndexReg := numLayers - 1
               //            currentLevelStartAddrReg := 0x4000000
-              currentAddrOffsetReg := (io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) * 24)
+              currentAddrOffsetReg := io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) @@ U"00000"
               //            currentNodeFirstSiblingStartAddrOffsetReg := getFirstSiblingAddrOffset(io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) * 0xC).resize(axiConfig.addressWidth)
 
               // For the read case, go directly to read state
@@ -364,7 +369,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
           when(io.sdramAxi.readRsp.fire) {
             when(decryptVerifyCounter.value < 16) {
-              nonceVecReg(decryptVerifyCounter.value(2 downto 0)) := io.sdramAxi.readRsp.data
+              nonceVecReg(decryptVerifyCounter.value(3 downto 0)) := io.sdramAxi.readRsp.data
             }
 
             when(io.sdramAxi.readRsp.last) {
@@ -401,7 +406,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
               sdramAxiSharedCmdValidReg := True
               when (isParentRootOfTree()) {
                 layerIndexReg := numLayers - 1
-                currentAddrOffsetReg := (io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) * 24)
+                currentAddrOffsetReg := getSdramDataAddress(axiSharedCmdReg.addr)
                 goto(decryptDataState)
               }
             }
@@ -428,11 +433,12 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
           when(!decryptStateReadDataReg) {
             io.sdramAxi.sharedCmd.addr := getCurrentTagNodeAddr()
-            io.sdramAxi.sharedCmd.len := 5 // 6 * 32 == 192 bits, which is the leaf node size
+//            io.sdramAxi.sharedCmd.len := 5 // 6 * 32 == 192 bits, which is the leaf node size
           } otherwise {
             io.sdramAxi.sharedCmd.addr := getSdramDataAddress(axiSharedCmdReg.addr)
-            io.sdramAxi.sharedCmd.len := 7 // 8 * 32 == 256 bits, AKA length of a cache line
+//            io.sdramAxi.sharedCmd.len := 7 // 8 * 32 == 256 bits, AKA length of a cache line
           }
+          io.sdramAxi.sharedCmd.len := 7
 
           io.sdramAxi.writeData.valid := False
           //          val axiSharedCmd = cloneOf(io.axi.sharedCmd)
@@ -570,7 +576,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
             sdramAxiSharedCmdValidReg := False
           }
           io.sdramAxi.sharedCmd.addr := getCurrentTagNodeAddr()
-          io.sdramAxi.sharedCmd.len := 5 // 6 * 32 == 192 bits; 6 - 1 = 5
+          io.sdramAxi.sharedCmd.len := 7
 
           io.sdramAxi.writeData.valid := nextNonceTagBlockFifo.io.pop.valid && sdramWrEnReg
           io.sdramAxi.writeData.data := nextNonceTagBlockFifo.io.pop.payload.fragment
@@ -587,8 +593,10 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
           when(io.sdramAxi.writeRsp.fire) {
             val index = getSiblingIndex()
-            nonceVecReg((index << 1)(2 downto 0)) := tempNonceReg(0)
-            nonceVecReg(((index << 1) + 1)(2 downto 0)) := tempNonceReg(1)
+            nonceVecReg((index << 4)(3 downto 0)) := tempNonceReg(0)
+            nonceVecReg(((index << 4) + 1)(3 downto 0)) := tempNonceReg(1)
+            nonceVecReg(((index << 4) + 2)(3 downto 0)) := tempNonceReg(2)
+            nonceVecReg(((index << 4) + 3)(3 downto 0)) := tempNonceReg(3)
 
             when (isRootOfTree()) {
               busyReg := False
@@ -613,23 +621,23 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
       val calculateNewTagState: State = new State {
         onEntry {
-          calculateNewTagDataInFifoValidReg := True
+          calculateNewTagStateDataInFifoValidReg := True
           debugFsmState := CALCULATE_NEW_TAG_STATE
         }
 
         whenIsActive {
-          dataInFifo.io.push.data.fragment := nonceVecReg(pendingWordsCounter)
-          dataInFifo.io.push.data.last := pendingWordsCounter.willOverflowIfInc
-          dataInFifo.io.push.valid := calculateNewTagDataInFifoValidReg
+          dataInFifo.io.push.data.fragment := nonceVecReg(pendingNonceCounter)
+          dataInFifo.io.push.data.last := pendingNonceCounter.willOverflowIfInc
+          dataInFifo.io.push.valid := calculateNewTagStateDataInFifoValidReg
 
           caesarCtrl.io.in_cmdstream.mode := caesarCtrl.MACGEN
 //          io.sdramAxi.writeData.valid := False
 
           when (dataInFifo.io.push.fire) {
-            pendingWordsCounter.increment()
+            pendingNonceCounter.increment()
 
-            when (pendingWordsCounter.willOverflowIfInc) {
-              calculateNewTagDataInFifoValidReg := False
+            when (pendingNonceCounter.willOverflowIfInc) {
+              calculateNewTagStateDataInFifoValidReg := False
             }
           }
 
@@ -654,7 +662,9 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           }
         }
 
-
+        onExit {
+          pendingNonceCounter := 0
+        }
       }
       // State for returning data to dcache
       val returnDataState: State = new State {

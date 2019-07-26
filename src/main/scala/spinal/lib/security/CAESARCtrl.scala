@@ -104,14 +104,12 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
         readyForInput := True
         
         burstCntr.increment()
-        when (burstCntr === 16) {
+        when (burstCntr === 15) {
           burstCntr.clear()
-        } 
-
-        when (burstCntr.willOverflowIfInc) {
           internalNonce := internalNonce + 1
           inReady := True
-        }
+        } 
+
       } elsewhen (burstCntr >= 8) {
         when (burstCntr === 8) {   // sending internalNonce
           data.fragment := internalNonce(4*config.dataWidth-1 downto 3*config.dataWidth).asBits
@@ -154,7 +152,7 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
         } elsewhen (burstCntr.value < 15) {   // decrypt ciphered data, generate tag
           when (burstCntr.value % 2 === 0) {
             lastData := currData
-          } elsewhen (burstCntr === 7) {
+          } elsewhen (burstCntr === 9) {
             outTag := B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment)
           } otherwise {
             outTag := outTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment))
@@ -174,7 +172,7 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
           burstCntr.clear()
         }
 
-        when (burstCntr <= 5) {
+        when (burstCntr < 8) {
           burstCntr.increment()
         } otherwise {
           outValid := True
@@ -183,15 +181,13 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
 
       } elsewhen (io.out_datastream.fire) {
         burstCntr.increment()
-        when (burstCntr === 16) {
+        when (burstCntr === 15) {
           burstCntr.clear()
+          inReady := True
         } 
 
         outValid := False
         readyForInput := True
-        when (burstCntr.willOverflowIfInc) {
-          inReady := True
-        }
       }
     }
     
@@ -275,23 +271,19 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
           //   outTag := outTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment))
           // }
 
-        } elsewhen (burstCntr.value === 16) { // get tag from input stream
+        } elsewhen (burstCntr.value === 20) { // get tag from input stream
           inTag := B(0, 128 - config.dataWidth bits) ## currData.fragment
-        } elsewhen (burstCntr.value < 19) {
+        } elsewhen (burstCntr.value < 23) {
           inTag := inTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## currData.fragment)
-        } elsewhen (burstCntr === 19) {
+        } elsewhen (burstCntr === 23) {
           inTag := inTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## currData.fragment)
           data.fragment := currData.fragment    // don't care what you output
           last := True
 
           when (outTag =/= inTag) {
             error := True
-          }        
-        } elsewhen (burstCntr === 20) {   // get first 32 bits of nonce
-          externalNonce := B(0, 128 - config.dataWidth bits) ## currData.fragment
-        } elsewhen (burstCntr < 24) {   // get rest of nonce
-          externalNonce := externalNonce.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## currData.fragment)
-        } otherwise { // shouldn't go here
+          }
+        }  otherwise { // shouldn't go here
           burstCntr.clear()
         }
 
