@@ -56,10 +56,10 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
   val inReady = RegInit(True)
 
   // val nonce = Reg(Bits(config.dataWidth bits)) init(1)
-//  val internalNonce = Reg(UInt(4*config.dataWidth bits)) init(1)
-  val internalNonce = U(1, 4*config.dataWidth bits)
+  val internalNonce = Reg(UInt(4*config.dataWidth bits)) init(1)
+//  val internalNonce = U(1, 4*config.dataWidth bits)
   val externalNonce = Reg(Bits(4*config.dataWidth bits)) init(0)
-  val error = Bool()
+  val error = RegInit(False)
 
   // val dataBurst = Reg(Array[Bits(config.dataWidth bits)](burstLen/2))
   // io.in_datastream.ready := readyForInput
@@ -71,7 +71,7 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
   data.last := last
 
   outValid := False
-  error := False
+//  error := False
   last := False
 
   when(io.in_cmdstream.fire) {
@@ -107,7 +107,7 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
         burstCntr.increment()
         when (burstCntr === 15) {
           burstCntr.clear()
-//          internalNonce := internalNonce + 1
+          internalNonce := internalNonce + 1
           inReady := True
         } 
 
@@ -166,7 +166,7 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
           last := True
 
           outTag := outTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment))
-          when (outTag =/= inTag) {
+          when ((outTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment))) =/= inTag) {
             error := True
           }
         } otherwise { // shouldn't go here
@@ -201,10 +201,7 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
           outTag := B(0, 128 - config.dataWidth bits) ## currData.fragment
         } elsewhen (burstCntr.value % 4 === 3) {
           outTag := outTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## currData.fragment)
-        } otherwise {
-          // do nothing
         }
-
         // when ((burstCntr.value % 2 === 0)) { // odd, sending data
         //   lastData := currData
         // } elsewhen (burstCntr === 1) { // even, first one
@@ -241,7 +238,7 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
           burstCntr.increment()
           outValid := False
           when(burstCntr.willOverflowIfInc) {
-//            internalNonce := internalNonce + 1
+            internalNonce := internalNonce + 1
             outValid := False
             inReady := True
           }
@@ -281,11 +278,9 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
           data.fragment := currData.fragment    // don't care what you output
           last := True
 
-          when (outTag =/= inTag) {
+          when (outTag =/= (inTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## currData.fragment))) {
             error := True
           }
-        }  otherwise { // shouldn't go here
-          burstCntr.clear()
         }
 
         when (burstCntr.willOverflowIfInc) {
