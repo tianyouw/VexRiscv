@@ -166,18 +166,27 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     (currentLevelStartAddr + getFirstSiblingAddrOffset(currentAddrOffsetReg)).resize(axiConfig.addressWidth)
   }
 
+  def multiply_683(n: UInt): UInt = n + (n << 1) + (n << 3) + (n << 5) + (n << 7) + (n << 9)
   def multiply_96(n: UInt): UInt = (n << 5) + (n << 6)
   def divide_96(n: UInt): UInt = {
-    val q = (n >> 7) + (n >> 9) + (n >> 11) + (n >> 13) + (n >> 15) + (n >> 17) + (n >> 19) + (n >> 21) + (n >> 23) + (n >> 25) + (n >> 27) + (n >> 29) + (n >> 31)
+    var q = (n >> 7) + (n >> 9) + (n >> 11)
+    q \= q + (q >> 6)
+    q \= q + (q >> 12)
+    q \= q + (n >> 31)
     val r = n - multiply_96(q)
-    q + (683 * r >> 16)
+    q + multiply_683(r) >> 16
   }
 
+  def multiply_2731(n: UInt): UInt = n + (n << 1) + (n << 3) + (n << 5) + (n << 7) + (n << 9) + (n << 11)
   def multiply_24(n: UInt): UInt = (n << 3) + (n << 4)
   def divide_24(n: UInt): UInt = {
-    val q = (n >> 5) + (n >> 7) + (n >> 9) + (n >> 11) + (n >> 13) + (n >> 15) + (n >> 17) + (n >> 19) + (n >> 21) + (n >> 23) + (n >> 25) + (n >> 27) + (n >> 29) + (n >> 31)
+    val q2 = (n >> 31) + (n >> 29)
+    var q = (n >> 5) + (n >> 7) + (n >> 9)
+    q \= q + (q >> 6)
+    q \= q + (q >> 12)
+    q \= q + (q2 >> 31)
     val r = n - multiply_24(q)
-    q + (2731 * r >> 16)
+    q + multiply_2731(r) >> 16
   }
 //
   def getFirstSiblingAddrOffset(addr: UInt): UInt = multiply_96(divide_96(addr))
@@ -193,7 +202,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
   def getSiblingIndex(): UInt = {
     val blockNum = divide_24(currentAddrOffsetReg)
-    val antimask = U(0x03, 23 bits)
+    val antimask = U(0x03, 22 bits)
     (blockNum - ((blockNum - 1) & ~antimask) - 1).resize(2 bits)
   }
 
