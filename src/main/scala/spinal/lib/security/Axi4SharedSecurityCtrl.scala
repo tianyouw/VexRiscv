@@ -189,9 +189,9 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   caesarCtrl.io.out_datastream <> dataOutFifo.io.push
   caesarCtrl.io.in_datastream <> dataInFifo.io.pop
   caesarCtrl.io.in_cmdstream.payload.assignDontCare()
-  caesarCtrl.io.in_cmdstream.valid := False
+//  caesarCtrl.io.in_cmdstream.valid := False
 
-  dataOutFifo.io.pop.ready := False
+//  dataOutFifo.io.pop.ready := False
 
   dataSetAsideFifo.io.push.valid := False
   dataSetAsideFifo.io.push.payload.assignDontCare()
@@ -211,10 +211,10 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
   val verifyTagStateReadCompleteReg = RegInit(False)
 
-  when (io.axi.sharedCmd.addr >= treeStart && !busyReg) {
-    // Accessing tree section; bypass and let it through directly
-    io.axi <> io.sdramAxi
-  } otherwise {
+//  when (io.axi.sharedCmd.addr >= treeStart && !busyReg) {
+//    // Accessing tree section; bypass and let it through directly
+//    io.axi <> io.sdramAxi
+//  } otherwise {
 //    (busyReg || (io.axi.sharedCmd.addr < treeStart && io.axi.sharedCmd.valid)) {
     dataOutFifo.io.pop.ready := io.sdramAxi.writeData.ready
 
@@ -275,41 +275,45 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
         }
 
         whenIsActive {
-          when(io.axi.sharedCmd.fire) {
-            busyReg := True
-            axiSharedCmdReg := io.axi.sharedCmd
-            writeDataCompleteReg := False
-            decryptStateReadDataReg := False
-            writeDataStateDoneWritingReg := False
-            calculateNewTagDataInFifoValidReg := True
-            verifyTagStateReadCompleteReg := False
+          when (busyReg || (io.axi.sharedCmd.valid && io.axi.sharedCmd.addr < treeStart)) {
+            when(io.axi.sharedCmd.fire) {
+              busyReg := True
+              axiSharedCmdReg := io.axi.sharedCmd
+              writeDataCompleteReg := False
+              decryptStateReadDataReg := False
+              writeDataStateDoneWritingReg := False
+              calculateNewTagDataInFifoValidReg := True
+              verifyTagStateReadCompleteReg := False
 
-            layerIndexReg := numLayers - 1
-//            currentLevelStartAddrReg := 0x4000000
-            currentAddrOffsetReg := (io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) * 24)
-//            currentNodeFirstSiblingStartAddrOffsetReg := getFirstSiblingAddrOffset(io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) * 0xC).resize(axiConfig.addressWidth)
+              layerIndexReg := numLayers - 1
+              //            currentLevelStartAddrReg := 0x4000000
+              currentAddrOffsetReg := (io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) * 24)
+              //            currentNodeFirstSiblingStartAddrOffsetReg := getFirstSiblingAddrOffset(io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) * 0xC).resize(axiConfig.addressWidth)
 
-            // For the read case, go directly to read state
-            when(!io.axi.sharedCmd.write) {
-              caesarInputCmdValidReg := True
+              // For the read case, go directly to read state
+              when(!io.axi.sharedCmd.write) {
+                caesarInputCmdValidReg := True
+                sdramAxiSharedCmdValidReg := True
+                goto(verifyTagFromSdramState)
+              }
+            }
+
+            // These two blocks are for the write case
+            when(io.axi.writeData.fire) {
+              writeRspValidReg := True
+              dataReg := io.axi.writeData.data
+              strbReg := io.axi.writeData.strb
+              io.axi.writeRsp.isOKAY()
+            }
+
+            when(io.axi.writeRsp.fire) {
+              writeRspValidReg := False
               sdramAxiSharedCmdValidReg := True
+              caesarInputCmdValidReg := True
               goto(verifyTagFromSdramState)
             }
-          }
-
-          // These two blocks are for the write case
-          when(io.axi.writeData.fire) {
-            writeRspValidReg := True
-            dataReg := io.axi.writeData.data
-            strbReg := io.axi.writeData.strb
-            io.axi.writeRsp.isOKAY()
-          }
-
-          when(io.axi.writeRsp.fire) {
-            writeRspValidReg := False
-            sdramAxiSharedCmdValidReg := True
-            caesarInputCmdValidReg := True
-            goto(verifyTagFromSdramState)
+          } otherwise {
+            io.axi <> io.sdramAxi
           }
         }
       }
@@ -672,6 +676,6 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
         }
       }
     }
-  }
+//  }
 
 }
