@@ -25,6 +25,7 @@ object Axi4SharedSecurityCtrl {
 }
 
 
+
 case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWidth: Int, layout : SdramLayout) extends Component {
   val axiConfig = Axi4SharedSdramCtrl.getAxiConfig(axiDataWidth, axiIdWidth, layout)
   val writeToRam = Reg(Bool())
@@ -32,7 +33,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
   // -------------Tree calculation stuff start
   final val treeAry = 4
-  final val treeStart = 0x4000000 // TODO: andrew, replace this with whatever you want
+  final val treeStart = 0x2000000 // TODO: andrew, replace this with whatever you want
   final val memorySizeBytes = 32 * 1024 * 1024 // TODO: andrew, get this from somewhere else?
   final val blockSizeBytes = 24
 
@@ -52,6 +53,16 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     layerCounter
   }
 
+
+  def IDLE_STATE: UInt = 0
+  def VERIFY_TAG_FROM_SDRAM_STATE: UInt = 1
+  def DECRYPT_DATA_STATE: UInt = 2
+  def ENCRYPT_DATA_STATE : UInt = 3
+  def WRITE_DATA_STATE : UInt = 4
+  def WRITE_NEW_TAG_STATE : UInt = 5
+  def CALCULATE_NEW_TAG_STATE : UInt = 6
+  def RETURN_DATA_STATE : UInt = 7
+
   val numLayers = getNumLayers(memorySizeBytes)
   // -------------Tree calculation stuff end
   val io = new Bundle {
@@ -67,6 +78,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     blockNum = getChild(blockNum, 0)
   }
 
+  val debugFsmState = RegInit(U(0, 3 bits))
   val layerIndexReg = RegInit(U(numLayers))
   // Data = 8 bytes, tag = 4 bytes, nonce = 2 bytes
   val dataInFifo = StreamFifo(dataType = CAESARCtrlInData(axiConfig), depth = 14)
@@ -157,11 +169,13 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   def getFirstSiblingAddrOffset(addr: UInt): UInt = (addr / 0x60) * 0x60
 //
 //
-  def getParentNodeAddrOffset() : UInt = ((currentAddrOffsetReg / 0x60) * 0x18).resize(axiConfig.addressWidth)
+  def getParentNodeAddrOffset() : UInt = ((((currentAddrOffsetReg / 24) - 1) / 4) * 24).resize(axiConfig.addressWidth)
 //
   def getParentNodeAddr(): UInt = (layerAddressVec(layerIndexReg - 1) + getParentNodeAddrOffset()).resize(axiConfig.addressWidth)
 //
-  def isRootOfTree(): Bool = getCurrentTagNodeAddr() === treeStart
+  def isRootOfTree(): Bool = layerIndexReg === 0
+
+  def isParentRootOfTree(): Bool = layerIndexReg === 1
 
   def getSiblingIndex(): UInt = {
     val blockNum = (currentAddrOffsetReg / 24)
@@ -197,7 +211,11 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
   val verifyTagStateReadCompleteReg = RegInit(False)
 
-  when (busyReg || io.axi.sharedCmd.addr < 0x4000000) {
+  when (io.axi.sharedCmd.addr >= treeStart && !busyReg) {
+    // Accessing tree section; bypass and let it through directly
+    io.axi <> io.sdramAxi
+  } otherwise {
+//    (busyReg || (io.axi.sharedCmd.addr < treeStart && io.axi.sharedCmd.valid)) {
     dataOutFifo.io.pop.ready := io.sdramAxi.writeData.ready
 
 
@@ -253,6 +271,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
         onEntry {
           pendingWordsCounter := 0
           sdramWrEnReg := False
+          debugFsmState := IDLE_STATE
         }
 
         whenIsActive {
@@ -296,7 +315,21 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
       }
 
       val verifyTagFromSdramState: State = new State {
+        onEntry {
+          verifyTagStateReadCompleteReg := False
+          debugFsmState := VERIFY_TAG_FROM_SDRAM_STATE
+        }
         whenIsActive {
+          when(isRootOfTree()) {
+            when (axiSharedCmdReg.write) {
+              sdramAxiSharedCmdValidReg := True
+              sdramWrEnReg := True
+              goto(writeNewTagState)
+            } otherwise {
+              goto(decryptDataState)
+            }
+          }
+
           io.sdramAxi.writeData.valid := False
           dataOutFifo.io.push.valid := False
           caesarCtrl.io.in_cmdstream.mode := caesarCtrl.MACVERIFY
@@ -350,23 +383,20 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
                 caesarInputCmdValidReg := True
                 goto(decryptDataState)
               } otherwise {
-                when(isRootOfTree()) {
-                  busyReg := False
-                  sdramWrEnReg := False
-                  sdramAxiSharedCmdValidReg := False
-                  goto(idleState)
-                } otherwise {
-                  sdramAxiSharedCmdValidReg := True
-                  sdramWrEnReg := True
-                  goto(writeNewTagState)
-                }
+                sdramAxiSharedCmdValidReg := True
+                sdramWrEnReg := True
+                goto(writeNewTagState)
               }
             } otherwise {
-              when(isRootOfTree()) {
+              decryptVerifyCounter := 0
+              updateToNextParentNodeAddrReg()
+              verifyTagStateReadCompleteReg := False
+              caesarInputCmdValidReg := True
+              sdramAxiSharedCmdValidReg := True
+              when (isParentRootOfTree()) {
+                layerIndexReg := numLayers - 1
+                currentAddrOffsetReg := (io.axi.sharedCmd.addr(axiConfig.addressWidth - 1 downto 5) * 24)
                 goto(decryptDataState)
-              } otherwise {
-                decryptVerifyCounter := 0
-                updateToNextParentNodeAddrReg()
               }
             }
           }
@@ -378,7 +408,11 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
       }
 
       val decryptDataState: State = new State {
-        //    onEntry(pendingWordsCounter := 0)
+        onEntry {
+          decryptStateReadDataReg := False
+          debugFsmState := DECRYPT_DATA_STATE
+        }
+
         whenIsActive {
           caesarCtrl.io.in_cmdstream.mode := caesarCtrl.DECRYPT
 
@@ -436,12 +470,12 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           }
         }
 
-        onExit {
-          decryptStateReadDataReg := False
-        }
       }
 
       val encryptDataState: State = new State {
+        onEntry {
+          debugFsmState := ENCRYPT_DATA_STATE
+        }
         whenIsActive {
           caesarCtrl.io.in_cmdstream.mode := caesarCtrl.ENCRYPT
 
@@ -474,6 +508,11 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
       }
 
       val writeDataState: State = new State {
+        onEntry {
+          writeDataStateDoneWritingReg := False
+          debugFsmState := WRITE_DATA_STATE
+        }
+
         whenIsActive {
           when(io.sdramAxi.sharedCmd.fire) {
             sdramAxiSharedCmdValidReg := False
@@ -517,6 +556,9 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
 
       val writeNewTagState: State = new State {
+        onEntry {
+          debugFsmState := WRITE_NEW_TAG_STATE
+        }
         whenIsActive {
           val tempNonceReg = Vec(Reg(Bits(axiConfig.dataWidth bits)), 2)
           when(io.sdramAxi.sharedCmd.fire) {
@@ -542,8 +584,16 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
             val index = getSiblingIndex()
             nonceVecReg((index << 1)(2 downto 0)) := tempNonceReg(0)
             nonceVecReg((index << 1 + 1)(2 downto 0)) := tempNonceReg(1)
-            caesarInputCmdValidReg := True
-            goto(calculateNewTagState)
+
+            when (isRootOfTree()) {
+              busyReg := False
+              sdramWrEnReg := False
+              sdramAxiSharedCmdValidReg := False
+              goto(idleState)
+            } otherwise {
+              caesarInputCmdValidReg := True
+              goto(calculateNewTagState)
+            }
             //            pendingWordsCounter.increment()
             //            sdramAxiSharedCmdValidReg := True
             //            when(pendingWordsCounter.willOverflowIfInc) {
@@ -557,7 +607,10 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
       }
 
       val calculateNewTagState: State = new State {
-
+        onEntry {
+          calculateNewTagDataInFifoValidReg := True
+          debugFsmState := CALCULATE_NEW_TAG_STATE
+        }
         whenIsActive {
           dataInFifo.io.push.data.fragment := nonceVecReg(pendingWordsCounter)
           dataInFifo.io.push.data.last := pendingWordsCounter.willOverflowIfInc
@@ -578,15 +631,27 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           caesarCtrl.io.out_datastream.ready := nextNonceTagBlockFifo.io.push.ready
 
           when (caesarCtrl.io.out_datastream.fire && caesarCtrl.io.out_datastream.data.last && !caesarCtrl.io.out_datastream.error) {
-            sdramAxiSharedCmdValidReg := True
-            caesarInputCmdValidReg := True
             updateToNextParentNodeAddrReg()
-            goto(verifyTagFromSdramState)
+            when (isParentRootOfTree()) {
+              sdramAxiSharedCmdValidReg := True
+              sdramWrEnReg := True
+              goto(writeNewTagState)
+            } otherwise {
+              sdramAxiSharedCmdValidReg := True
+              caesarInputCmdValidReg := True
+              sdramWrEnReg := False
+              goto(verifyTagFromSdramState)
+            }
           }
         }
+
+
       }
       // State for returning data to dcache
       val returnDataState: State = new State {
+        onEntry {
+          debugFsmState := RETURN_DATA_STATE
+        }
         whenIsActive {
           io.axi.readRsp.valid := dataSetAsideFifo.io.pop.valid
           io.axi.readRsp.data := dataSetAsideFifo.io.pop.payload.fragment
@@ -594,7 +659,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           io.axi.readRsp.id := axiSharedCmdReg.id
           io.axi.readRsp.setOKAY()
 
-          dataOutFifo.io.pop.ready := io.axi.readRsp.ready
+          dataSetAsideFifo.io.pop.ready := io.axi.readRsp.ready
 
           when(io.axi.readRsp.fire && io.axi.readRsp.last) {
             goto(idleState)
@@ -607,9 +672,6 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
         }
       }
     }
-  } otherwise {
-    // Accessing tree section; bypass and let it through directly
-    io.axi <> io.sdramAxi
   }
 
 }
