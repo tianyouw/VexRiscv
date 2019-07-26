@@ -165,11 +165,25 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   def getCurrentTagNodeFirstSiblingAddr() : UInt = {
     (currentLevelStartAddr + getFirstSiblingAddrOffset(currentAddrOffsetReg)).resize(axiConfig.addressWidth)
   }
+
+  def multiply_96(n: UInt): UInt = (n << 5) + (n << 6)
+  def divide_96(n: UInt): UInt = {
+    val q = (n >> 7) + (n >> 9) + (n >> 11) + (n >> 13) + (n >> 15) + (n >> 17) + (n >> 19) + (n >> 21) + (n >> 23) + (n >> 25) + (n >> 27) + (n >> 29) + (n >> 31)
+    val r = n - multiply_96(q)
+    q + (683 * r >> 16)
+  }
+
+  def multiply_24(n: UInt): UInt = (n << 3) + (n << 4)
+  def divide_24(n: UInt): UInt = {
+    val q = (n >> 5) + (n >> 7) + (n >> 9) + (n >> 11) + (n >> 13) + (n >> 15) + (n >> 17) + (n >> 19) + (n >> 21) + (n >> 23) + (n >> 25) + (n >> 27) + (n >> 29) + (n >> 31)
+    val r = n - multiply_24(q)
+    q + (2731 * r >> 16)
+  }
 //
-  def getFirstSiblingAddrOffset(addr: UInt): UInt = (addr / 0x60) * 0x60
+  def getFirstSiblingAddrOffset(addr: UInt): UInt = multiply_96(divide_96(addr))
 //
 //
-  def getParentNodeAddrOffset() : UInt = ((((currentAddrOffsetReg / 24) - 1) >> 2) * 24).resize(axiConfig.addressWidth)
+  def getParentNodeAddrOffset() : UInt = multiply_24((divide_24(currentAddrOffsetReg) - 1) >> 2).resize(axiConfig.addressWidth)
 //
   def getParentNodeAddr(): UInt = (layerAddressVec(layerIndexReg - 1) + getParentNodeAddrOffset()).resize(axiConfig.addressWidth)
 //
@@ -178,8 +192,8 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   def isParentRootOfTree(): Bool = layerIndexReg === 1
 
   def getSiblingIndex(): UInt = {
-    val blockNum = (currentAddrOffsetReg / 24)
-    val antimask = U(0x03, 27 bits)
+    val blockNum = divide_24(currentAddrOffsetReg)
+    val antimask = U(0x03, 23 bits)
     (blockNum - ((blockNum - 1) & ~antimask) - 1).resize(2 bits)
   }
 
