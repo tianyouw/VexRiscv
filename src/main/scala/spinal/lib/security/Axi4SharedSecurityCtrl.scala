@@ -183,8 +183,8 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   def isParentRootOfTree(): Bool = layerIndexReg === 1
 
   def getSiblingIndex(): UInt = {
-    val blockNum = (currentAddrOffsetReg / 24)
-    val antimask = U(0x03, 27 bits)
+    val blockNum = (currentAddrOffsetReg >> 5)
+    val antimask = U(0x03, 22 bits)
     (blockNum - ((blockNum - 1) & ~antimask) - 1).resize(2 bits)
   }
 
