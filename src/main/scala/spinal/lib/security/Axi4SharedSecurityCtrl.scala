@@ -168,9 +168,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   }
 //
   def getFirstSiblingAddrOffset(addr: UInt): UInt = {
-    val out = addr
-    out(7 downto 0) := 0
-    out
+    addr(axiConfig.addressWidth - 1 downto 8) @@ U(0, 8 bits)
   }
 //
 //

@@ -56,7 +56,8 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
   val inReady = RegInit(True)
 
   // val nonce = Reg(Bits(config.dataWidth bits)) init(1)
-  val internalNonce = Reg(UInt(4*config.dataWidth bits)) init(1)
+//  val internalNonce = Reg(UInt(4*config.dataWidth bits)) init(1)
+  val internalNonce = U(1, 4*config.dataWidth bits)
   val externalNonce = Reg(Bits(4*config.dataWidth bits)) init(0)
   val error = Bool()
 
@@ -106,7 +107,7 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
         burstCntr.increment()
         when (burstCntr === 15) {
           burstCntr.clear()
-          internalNonce := internalNonce + 1
+//          internalNonce := internalNonce + 1
           inReady := True
         } 
 
@@ -240,7 +241,7 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
           burstCntr.increment()
           outValid := False
           when(burstCntr.willOverflowIfInc) {
-            internalNonce := internalNonce + 1
+//            internalNonce := internalNonce + 1
             outValid := False
             inReady := True
           }
