@@ -585,7 +585,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           nextNonceTagBlockFifo.io.pop.ready := io.sdramAxi.writeData.ready
 
           when(io.sdramAxi.writeData.fire) {
-            when (pendingWordsCounter.value === 0 || pendingWordsCounter.value === 1) {
+            when (pendingWordsCounter.value < 4) {
               tempNonceReg(pendingWordsCounter.value(1 downto 0)) := nextNonceTagBlockFifo.io.pop.payload.fragment
             }
             pendingWordsCounter.increment()
@@ -593,10 +593,10 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
           when(io.sdramAxi.writeRsp.fire) {
             val index = getSiblingIndex()
-            nonceVecReg((index << 4)(3 downto 0)) := tempNonceReg(0)
-            nonceVecReg(((index << 4) + 1)(3 downto 0)) := tempNonceReg(1)
-            nonceVecReg(((index << 4) + 2)(3 downto 0)) := tempNonceReg(2)
-            nonceVecReg(((index << 4) + 3)(3 downto 0)) := tempNonceReg(3)
+            nonceVecReg((index << 2)(3 downto 0)) := tempNonceReg(0)
+            nonceVecReg(((index << 2) + 1)(3 downto 0)) := tempNonceReg(1)
+            nonceVecReg(((index << 2) + 2)(3 downto 0)) := tempNonceReg(2)
+            nonceVecReg(((index << 2) + 3)(3 downto 0)) := tempNonceReg(3)
 
             when (isRootOfTree()) {
               busyReg := False
