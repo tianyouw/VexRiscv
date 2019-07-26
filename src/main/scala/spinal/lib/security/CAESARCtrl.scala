@@ -45,7 +45,7 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
   val data = Reg(Fragment(Bits(config.dataWidth bits)))
   val currData = Fragment(Bits(config.dataWidth bits))
   val lastData = Reg(Fragment(Bits(config.dataWidth bits)))
-  val burstCntr = Counter(0 until 16)
+  val burstCntr = Counter(0 until 24)
   val last = Bool()
 
 
@@ -102,7 +102,11 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
       } elsewhen (io.out_datastream.fire) {
         outValid := False
         readyForInput := True
+        
         burstCntr.increment()
+        when (burstCntr === 16) {
+          burstCntr.clear()
+        } 
 
         when (burstCntr.willOverflowIfInc) {
           internalNonce := internalNonce + 1
@@ -179,6 +183,10 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
 
       } elsewhen (io.out_datastream.fire) {
         burstCntr.increment()
+        when (burstCntr === 16) {
+          burstCntr.clear()
+        } 
+
         outValid := False
         readyForInput := True
         when (burstCntr.willOverflowIfInc) {
@@ -192,31 +200,40 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
         // input data burst
         currData := io.in_datastream.data
 
-        when ((burstCntr.value % 2 === 0)) { // odd, sending data
-          lastData := currData
-        } elsewhen (burstCntr === 1) { // even, first one
-          outTag := B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment)
-        } elsewhen (burstCntr.value < 8) { // even, sending data
-          outTag := outTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment))
+        when (burstCntr.value === 3) {
+          outTag := B(0, 128 - config.dataWidth bits) ## currData.fragment
+        } elsewhen (burstCntr.value % 4 === 3) {
+          outTag := outTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## currData.fragment)
+        } otherwise {
+          // do nothing
         }
 
+        // when ((burstCntr.value % 2 === 0)) { // odd, sending data
+        //   lastData := currData
+        // } elsewhen (burstCntr === 1) { // even, first one
+        //   outTag := B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment)
+        // } elsewhen (burstCntr.value < 8) { // even, sending data
+        //   outTag := outTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment))
+        // }
+
         burstCntr.increment()
-      } elsewhen (burstCntr >= 8) {
-        when (burstCntr === 8) {   // sending internalNonce
+        
+      } elsewhen (burstCntr >= 16) {
+        when (burstCntr === 16) {   // sending internalNonce
           data.fragment := internalNonce(4*config.dataWidth-1 downto 3*config.dataWidth).asBits
-        } elsewhen (burstCntr === 9) {   // sending internalNonce
+        } elsewhen (burstCntr === 17) {   // sending internalNonce
           data.fragment := internalNonce(3*config.dataWidth-1 downto 2*config.dataWidth).asBits
-        } elsewhen (burstCntr === 10) {   // sending internalNonce
+        } elsewhen (burstCntr === 18) {   // sending internalNonce
           data.fragment := internalNonce(2*config.dataWidth-1 downto config.dataWidth).asBits
-        } elsewhen (burstCntr === 11) {   // sending internalNonce
+        } elsewhen (burstCntr === 19) {   // sending internalNonce
           data.fragment := internalNonce(config.dataWidth-1 downto 0).asBits
-        } elsewhen (burstCntr === 12) {   // sending outTag
+        } elsewhen (burstCntr === 20) {   // sending outTag
           data.fragment := outTag(4*config.dataWidth-1 downto 3*config.dataWidth)
-        } elsewhen (burstCntr === 13) {   // sending outTag
+        } elsewhen (burstCntr === 21) {   // sending outTag
           data.fragment := outTag(3*config.dataWidth-1 downto 2*config.dataWidth)
-        } elsewhen (burstCntr === 14) {   // sending outTag
+        } elsewhen (burstCntr === 22) {   // sending outTag
           data.fragment := outTag(2*config.dataWidth-1 downto config.dataWidth)
-        } elsewhen (burstCntr === 15) {   // sending outTag
+        } elsewhen (burstCntr === 23) {   // sending outTag
           data.fragment := outTag(config.dataWidth-1 downto 0)
           last := True
         }
@@ -241,17 +258,28 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
         currData := io.in_datastream.data
 //        readyForInput := False
 
-        when ((burstCntr.value % 2 === 0)) { // odd, sending data
-          lastData := currData
-        } elsewhen (burstCntr === 1) { // even, first one
-          outTag := B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment)
-        } elsewhen (burstCntr.value < 8) { // even
-          outTag := outTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment))
-        } elsewhen (burstCntr.value === 8) { // get tag from input stream
+        when (burstCntr.value < 16) {
+          when (burstCntr === 3) {
+            outTag := B(0, 128 - config.dataWidth bits) ## currData.fragment
+          } elsewhen (burstCntr.value % 4 === 3) {
+            outTag := outTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## currData.fragment)
+          } otherwise {
+            // do nothing
+          }
+
+          // when ((burstCntr.value % 2 === 0)) { // odd, sending data
+          //   lastData := currData
+          // } elsewhen (burstCntr === 1) { // even, first one
+          //   outTag := B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment)
+          // } elsewhen (burstCntr.value < 8) { // even
+          //   outTag := outTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment))
+          // }
+
+        } elsewhen (burstCntr.value === 16) { // get tag from input stream
           inTag := B(0, 128 - config.dataWidth bits) ## currData.fragment
-        } elsewhen (burstCntr.value < 11) {
+        } elsewhen (burstCntr.value < 19) {
           inTag := inTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## currData.fragment)
-        } elsewhen (burstCntr === 11) {
+        } elsewhen (burstCntr === 19) {
           inTag := inTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## currData.fragment)
           data.fragment := currData.fragment    // don't care what you output
           last := True
@@ -259,9 +287,9 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
           when (outTag =/= inTag) {
             error := True
           }        
-        } elsewhen (burstCntr === 12) {   // get first 32 bits of nonce
+        } elsewhen (burstCntr === 20) {   // get first 32 bits of nonce
           externalNonce := B(0, 128 - config.dataWidth bits) ## currData.fragment
-        } elsewhen (burstCntr < 16) {   // get rest of nonce
+        } elsewhen (burstCntr < 24) {   // get rest of nonce
           externalNonce := externalNonce.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## currData.fragment)
         } otherwise { // shouldn't go here
           burstCntr.clear()

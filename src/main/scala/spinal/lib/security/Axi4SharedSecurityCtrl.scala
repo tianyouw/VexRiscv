@@ -341,7 +341,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           caesarCtrl.io.in_cmdstream.mode := caesarCtrl.MACVERIFY
           caesarCtrl.io.out_datastream.ready := verifyTagStateReadCompleteReg
 
-          when(decryptVerifyCounter.value < 8) {
+          when(decryptVerifyCounter.value < 16) {
             io.sdramAxi.sharedCmd.addr := getCurrentTagNodeFirstSiblingAddr() + (decryptVerifyCounter << 2)
             io.sdramAxi.sharedCmd.len := 3 // Burst of 4, since 128 bit nonces
           } otherwise {
@@ -363,7 +363,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           dataInFifo.io.push.payload.data.fragment := io.sdramAxi.readRsp.data
 
           when(io.sdramAxi.readRsp.fire) {
-            when(decryptVerifyCounter.value < 8) {
+            when(decryptVerifyCounter.value < 16) {
               nonceVecReg(decryptVerifyCounter.value(2 downto 0)) := io.sdramAxi.readRsp.data
             }
 
