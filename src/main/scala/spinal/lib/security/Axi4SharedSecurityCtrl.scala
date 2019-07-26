@@ -169,7 +169,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   def getFirstSiblingAddrOffset(addr: UInt): UInt = (addr / 0x60) * 0x60
 //
 //
-  def getParentNodeAddrOffset() : UInt = ((((currentAddrOffsetReg / 24) - 1) / 4) * 24).resize(axiConfig.addressWidth)
+  def getParentNodeAddrOffset() : UInt = ((((currentAddrOffsetReg / 24) - 1) >> 2) * 24).resize(axiConfig.addressWidth)
 //
   def getParentNodeAddr(): UInt = (layerAddressVec(layerIndexReg - 1) + getParentNodeAddrOffset()).resize(axiConfig.addressWidth)
 //
@@ -210,6 +210,8 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   val calculateNewTagDataInFifoValidReg = RegInit(True)
 
   val verifyTagStateReadCompleteReg = RegInit(False)
+
+  val tempNonceReg = Vec(Reg(Bits(axiConfig.dataWidth bits)), 2)
 
 //  when (io.axi.sharedCmd.addr >= treeStart && !busyReg) {
 //    // Accessing tree section; bypass and let it through directly
@@ -564,7 +566,6 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           debugFsmState := WRITE_NEW_TAG_STATE
         }
         whenIsActive {
-          val tempNonceReg = Vec(Reg(Bits(axiConfig.dataWidth bits)), 2)
           when(io.sdramAxi.sharedCmd.fire) {
             sdramAxiSharedCmdValidReg := False
           }
@@ -587,7 +588,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           when(io.sdramAxi.writeRsp.fire) {
             val index = getSiblingIndex()
             nonceVecReg((index << 1)(2 downto 0)) := tempNonceReg(0)
-            nonceVecReg((index << 1 + 1)(2 downto 0)) := tempNonceReg(1)
+            nonceVecReg(((index << 1) + 1)(2 downto 0)) := tempNonceReg(1)
 
             when (isRootOfTree()) {
               busyReg := False
@@ -615,12 +616,14 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           calculateNewTagDataInFifoValidReg := True
           debugFsmState := CALCULATE_NEW_TAG_STATE
         }
+
         whenIsActive {
           dataInFifo.io.push.data.fragment := nonceVecReg(pendingWordsCounter)
           dataInFifo.io.push.data.last := pendingWordsCounter.willOverflowIfInc
           dataInFifo.io.push.valid := calculateNewTagDataInFifoValidReg
 
           caesarCtrl.io.in_cmdstream.mode := caesarCtrl.MACGEN
+//          io.sdramAxi.writeData.valid := False
 
           when (dataInFifo.io.push.fire) {
             pendingWordsCounter.increment()
@@ -629,6 +632,8 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
               calculateNewTagDataInFifoValidReg := False
             }
           }
+
+          dataOutFifo.io.push.valid := False
 
           nextNonceTagBlockFifo.io.push.valid := caesarCtrl.io.out_datastream.valid
           nextNonceTagBlockFifo.io.push.payload := caesarCtrl.io.out_datastream.data

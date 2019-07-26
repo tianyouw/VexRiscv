@@ -87,10 +87,10 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
         // input data burst
         currData := io.in_datastream.data
 
-        when (burstCntr === 0) { // even, first one
-          outTag := B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment)
-        } elsewhen ((burstCntr.value % 2 === 1) && (burstCntr.value < 8)) { // odd, sending data
+        when ((burstCntr.value % 2 === 0)) { // odd, sending data
           lastData := currData
+        } elsewhen (burstCntr === 1) { // even, first one
+          outTag := B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment)
         } elsewhen (burstCntr.value < 8) { // even, sending data
           outTag := outTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment))
         }
@@ -187,11 +187,11 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
       when (io.in_datastream.fire) {
         // input data burst
         currData := io.in_datastream.data
-        
-        when (burstCntr === 0) { // even, first one
-          outTag := B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment)
-        } elsewhen ((burstCntr.value % 2 === 1) && (burstCntr.value < 8)) { // odd, sending data
+
+        when ((burstCntr.value % 2 === 0)) { // odd, sending data
           lastData := currData
+        } elsewhen (burstCntr === 1) { // even, first one
+          outTag := B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment)
         } elsewhen (burstCntr.value < 8) { // even, sending data
           outTag := outTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment))
         }
@@ -232,11 +232,11 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
         // input data burst
         currData := io.in_datastream.data
 //        readyForInput := False
-        
-        when (burstCntr === 0) { // even, first one; generating a tag from the input data
-          outTag := B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment)
-        } elsewhen ((burstCntr.value % 2 === 1) && (burstCntr.value < 8)) { // odd
+
+        when ((burstCntr.value % 2 === 0)) { // odd, sending data
           lastData := currData
+        } elsewhen (burstCntr === 1) { // even, first one
+          outTag := B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment)
         } elsewhen (burstCntr.value < 8) { // even
           outTag := outTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment))
         } elsewhen (burstCntr.value === 8) { // get tag from input stream
