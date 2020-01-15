@@ -59,7 +59,7 @@ class AsconCore(UNROLLED_ROUNDS: Int = 1,
     val DP_WriteIODataxSI = in Bool
     val IODataxDO = out Bits (DATA_BLOCK_SIZE bits)
     val CP_DonexSO = out Bool
-    val StatexDO = out Bits (5*STATE_WORD_SIZE bits)
+    val StatexDO = out Vec(Bits(STATE_WORD_SIZE bits), 5)
   }
 
 //  constant CONTROL_STATE_SIZE : integer := 4;
@@ -96,7 +96,7 @@ class AsconCore(UNROLLED_ROUNDS: Int = 1,
 
 //  signal StatexDP : std_logic_vector(5*STATE_WORD_SIZE-1 downto 0);
   io.CP_DonexSO := CP_DonexS
-  io.StatexDO := StatexDP(4) ## StatexDP(3) ## StatexDP(2) ## StatexDP(1) ## StatexDP(0)
+  io.StatexDO := StatexDP
 //  signal DP_InitxS      : std_logic;
 //  signal DP_XorZKeyxS   : std_logic;
 //  signal DP_XorKeyZxS   : std_logic;
