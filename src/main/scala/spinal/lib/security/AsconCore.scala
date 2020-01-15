@@ -59,7 +59,7 @@ class AsconCore(UNROLLED_ROUNDS: Int = 1,
     val DP_WriteIODataxSI = in Bool
     val IODataxDO = out Bits (DATA_BLOCK_SIZE bits)
     val CP_DonexSO = out Bool
-    val StatexDO = in Bits (5*STATE_WORD_SIZE bits)
+    val StatexDO = out Bits (5*STATE_WORD_SIZE bits)
   }
 
 //  constant CONTROL_STATE_SIZE : integer := 4;
@@ -95,8 +95,8 @@ class AsconCore(UNROLLED_ROUNDS: Int = 1,
   val ControlStatexDP = RegNext(ControlStatexDN) init(B(0, CONTROL_STATE_SIZE bits))
 
 //  signal StatexDP : std_logic_vector(5*STATE_WORD_SIZE-1 downto 0);
+  io.CP_DonexSO := CP_DonexS
   io.StatexDO := StatexDP(4) ## StatexDP(3) ## StatexDP(2) ## StatexDP(1) ## StatexDP(0)
-
 //  signal DP_InitxS      : std_logic;
 //  signal DP_XorZKeyxS   : std_logic;
 //  signal DP_XorKeyZxS   : std_logic;
@@ -236,6 +236,8 @@ class AsconCore(UNROLLED_ROUNDS: Int = 1,
     }
   }
 
+  PxDV(4) := PxDV(0) ^ DP_XorZOnexS.asBits(1 bit)
+
   when (DP_DecryptxS) {
     PxDV(0) := io.DataWritexDI
   }
@@ -243,7 +245,7 @@ class AsconCore(UNROLLED_ROUNDS: Int = 1,
   for (r <- 0 until UNROLLED_ROUNDS) {
     RoundConstxDV := B(0, 64 - 8 bits) ## ~B(ControlStatexDP(3 downto 0).asUInt + r, CONTROL_STATE_SIZE bits) ## B(ControlStatexDP(3 downto 0).asUInt + r, CONTROL_STATE_SIZE bits)
 
-    RxDV(0) := RxDV(0) ^ PxDV(4)
+    RxDV(0) := PxDV(0) ^ PxDV(4)
     RxDV(1) := PxDV(1)
     RxDV(2) := PxDV(2) ^ PxDV(1) ^ RoundConstxDV
     RxDV(3) := PxDV(3)
