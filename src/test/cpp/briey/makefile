@@ -1,9 +1,9 @@
 DEBUG?=no
-TRACE?=no
+TRACE?=yes
 TRACE_INSTRUCTION?=no
 TRACE_REG?=no
 PRINT_PERF?=no
-VGA?=yes
+VGA?=no
 TRACE_START=0
 ADDCFLAGS += -CFLAGS -pthread 
 ADDCFLAGS += -CFLAGS -lSDL2
@@ -48,7 +48,7 @@ run: compile
 verilate: ../../../../Briey.v
 	rm -f Briey.v*.bin
 	cp ../../../../Briey.v*.bin . | true
-	verilator -cc  ../../../../Briey.v -CFLAGS -std=c++11  ${ADDCFLAGS} --gdbbt ${VERILATOR_ARGS} -Wno-WIDTH -Wno-UNOPTFLAT --x-assign unique --exe main.cpp
+	verilator -cc  ../../../../Briey.v -CFLAGS -std=c++11  ${ADDCFLAGS} --gdbbt ${VERILATOR_ARGS} -Wno-WIDTH -Wno-UNOPTFLAT --x-assign unique --exe main.cpp -Wno-CMPCONST
  	
 compile: verilate
 	make  -j  -C obj_dir/ -f VBriey.mk VBriey

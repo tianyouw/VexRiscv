@@ -6,6 +6,7 @@ import vexriscv._
 import vexriscv.ip.{DataCacheConfig, InstructionCacheConfig}
 import spinal.core._
 import spinal.lib._
+import spinal.lib.security._
 import spinal.lib.bus.amba3.apb._
 import spinal.lib.bus.amba4.axi._
 import spinal.lib.com.jtag.Jtag
@@ -76,10 +77,10 @@ object BrieyConfig{
           //              portTlbSize = 4
           //            )
         ),
-        //                    new DBusSimplePlugin(
-        //                      catchAddressMisaligned = true,
-        //                      catchAccessFault = true
-        //                    ),
+//        new DBusSimplePlugin(
+//          catchAddressMisaligned = true,
+//          catchAccessFault = true
+//        ),
         new DBusCachedPlugin(
           config = new DataCacheConfig(
             cacheSize         = 4096,
@@ -242,6 +243,7 @@ class Briey(config: BrieyConfig) extends Component{
       idWidth = 4
     )
 
+
     val sdramCtrl = Axi4SharedSdramCtrl(
       axiDataWidth = 32,
       axiIdWidth   = 4,
@@ -281,7 +283,12 @@ class Briey(config: BrieyConfig) extends Component{
       vgaClock        = vgaClockDomain
     )
     val vgaCtrl = Axi4VgaCtrl(vgaCtrlConfig)
-
+    val secureAccessCtrl = Axi4SharedSecurityCtrl(
+      axiDataWidth = 32,
+      axiAddrWidth = 32,
+      axiIdWidth = 4,
+      layout = sdramLayout
+    )
 
 
     val core = new Area{
@@ -314,14 +321,19 @@ class Briey(config: BrieyConfig) extends Component{
 
     axiCrossbar.addSlaves(
       ram.io.axi       -> (0x80000000L,   onChipRamSize),
-      sdramCtrl.io.axi -> (0x40000000L,   sdramLayout.capacity),
+//      sdramCtrl.io.axi -> (0x40000000L,   sdramLayout.capacity),
+      secureAccessCtrl.io.axi -> (0x40000000L,   sdramLayout.capacity),
       apbBridge.io.axi -> (0xF0000000L,   1 MB)
     )
 
     axiCrossbar.addConnections(
-      core.iBus       -> List(ram.io.axi, sdramCtrl.io.axi),
-      core.dBus       -> List(ram.io.axi, sdramCtrl.io.axi, apbBridge.io.axi),
-      vgaCtrl.io.axi  -> List(            sdramCtrl.io.axi)
+//      core.iBus       -> List(ram.io.axi, sdramCtrl.io.axi),
+//      core.dBus       -> List(ram.io.axi, sdramCtrl.io.axi, apbBridge.io.axi),
+//      vgaCtrl.io.axi  -> List(            sdramCtrl.io.axi)
+      core.iBus       -> List(ram.io.axi, secureAccessCtrl.io.axi),
+      core.dBus       -> List(ram.io.axi, secureAccessCtrl.io.axi, apbBridge.io.axi),
+      vgaCtrl.io.axi  -> List(            secureAccessCtrl.io.axi)
+//      secureAccessCtrl.io.sdramAxi -> List(sdramCtrl.io.axi)
     )
 
 
@@ -333,11 +345,12 @@ class Briey(config: BrieyConfig) extends Component{
     })
 
     axiCrossbar.addPipelining(sdramCtrl.io.axi)((crossbar,ctrl) => {
-      crossbar.sharedCmd.halfPipe()  >>  ctrl.sharedCmd
-      crossbar.writeData            >/-> ctrl.writeData
-      crossbar.writeRsp              <<  ctrl.writeRsp
-      crossbar.readRsp               <<  ctrl.readRsp
-    })
+       crossbar.sharedCmd.halfPipe()  >>  ctrl.sharedCmd
+       crossbar.writeData            >/-> ctrl.writeData
+       crossbar.writeRsp              <<  ctrl.writeRsp
+       crossbar.readRsp               <<  ctrl.readRsp
+     })
+
 
     axiCrossbar.addPipelining(ram.io.axi)((crossbar,ctrl) => {
       crossbar.sharedCmd.halfPipe()  >>  ctrl.sharedCmd
@@ -358,7 +371,45 @@ class Briey(config: BrieyConfig) extends Component{
       cpu.readRsp               <-< crossbar.readRsp //Data cache directly use read responses without buffering, so pipeline it for FMax
     })
 
+     axiCrossbar.addPipelining(secureAccessCtrl.io.axi)((crossbar, ctrl) => {
+       crossbar.sharedCmd.halfPipe()  >>  ctrl.sharedCmd
+       crossbar.writeData            >/-> ctrl.writeData
+       crossbar.writeRsp              <<  ctrl.writeRsp
+       crossbar.readRsp               <<  ctrl.readRsp
+     })
+
     axiCrossbar.build()
+
+
+    // Set up secondary axi bus between access control and the SRAM
+//    val sdramAxiCrossbar = Axi4CrossbarFactory()
+//
+//    sdramAxiCrossbar.addSlaves(
+//      sdramCtrl.io.axi -> (0x40000000L,   sdramLayout.capacity)
+//    )
+//
+//    sdramAxiCrossbar.addConnections(
+//      secureAccess.iBusSdram -> List(sdramCtrl.io.axi),
+//      secureAccess.dBusSdram -> List(sdramCtrl.io.axi)
+//      // vgaCtrl.io.axi  -> List(            sdramCtrl.io.axi)
+//    )
+//
+//    sdramAxiCrossbar.addPipelining(sdramCtrl.io.axi)((crossbar,ctrl) => {
+//      crossbar.sharedCmd.halfPipe()  >>  ctrl.sharedCmd
+//      crossbar.writeData            >/-> ctrl.writeData
+//      crossbar.writeRsp              <<  ctrl.writeRsp
+//      crossbar.readRsp               <<  ctrl.readRsp
+//    })
+//
+//    // sdramAxiCrossbar.addPipelining(secureAccess.secureAccessCtrl.io.sdramAxi)((ctrl, crossbar) => {
+//    //   ctrl.sharedCmd.halfPipe()  >>  crossbar.sharedCmd
+//    //   ctrl.writeData            >/-> crossbar.writeData
+//    //   ctrl.writeRsp              <<  crossbar.writeRsp
+//    //   ctrl.readRsp               <<  crossbar.readRsp
+//    // })
+//
+//    sdramAxiCrossbar.build()
+
 
 
     val apbDecoder = Apb3Decoder(
@@ -372,6 +423,7 @@ class Briey(config: BrieyConfig) extends Component{
       )
     )
   }
+  axi.secureAccessCtrl.io.sdramAxi <> axi.sdramCtrl.io.axi
 
   io.gpioA          <> axi.gpioACtrl.io.gpio
   io.gpioB          <> axi.gpioBCtrl.io.gpio
