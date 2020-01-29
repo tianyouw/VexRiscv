@@ -46,8 +46,9 @@ class AsconCore(UNROLLED_ROUNDS: Int = 1,
 
     //    val ClkxCI = in Bool
     //    val RstxRBI = in Bool
-    val AddressxDI = in Bits (ADDR_BUS_WIDTH bits)
+//    val AddressxDI = in Bits (ADDR_BUS_WIDTH bits)
     val KeyxDI = in Bits (KEY_SIZE bits)
+    val NoncexDI = in Bits (128 bits)
     val CP_InitxSI = in Bool
     val CP_AssociatexSI = in Bool
     val CP_EncryptxSI = in Bool
@@ -56,7 +57,7 @@ class AsconCore(UNROLLED_ROUNDS: Int = 1,
     val CP_FinalDecryptxSI = in Bool
     val DP_WriteNoncexSI = in Bool
     val DataWritexDI = in Bits (DATA_BUS_WIDTH bits)
-    val DP_WriteIODataxSI = in Bool
+//    val DP_WriteIODataxSI = in Bool
     val IODataxDO = out Bits (DATA_BLOCK_SIZE bits)
     val CP_DonexSO = out Bool
     val StatexDO = out Vec(Bits(STATE_WORD_SIZE bits), 5)
@@ -202,7 +203,8 @@ class AsconCore(UNROLLED_ROUNDS: Int = 1,
     PxDV(0) := CONST_KEY_SIZE ## CONST_RATE ## CONST_ROUNDS_A ## CONST_ROUNDS_B ## B(0, 32 bits)
     PxDV(1) := io.KeyxDI(127 downto 64)
     PxDV(2) := io.KeyxDI(63 downto 0)
-    // State3xDP and State4xDP were already initialized with the NONCE
+    StatexDN(3) := io.NoncexDI(127 downto 64)
+    StatexDN(4) := io.NoncexDI(63 downto 0)
   }
 
   // For 128 variant
@@ -287,30 +289,30 @@ class AsconCore(UNROLLED_ROUNDS: Int = 1,
     }
   }
 
-  when (io.DP_WriteNoncexSI) {
-    if (DATA_BUS_WIDTH == 32) {
-      when (io.AddressxDI(1 downto 0) === B"2b00") {
-        StatexDN(4)(31 downto 0) := io.DataWritexDI
-      } elsewhen(io.AddressxDI(1 downto 0) === B"2b01") {
-        StatexDN(4)(63 downto 32) := io.DataWritexDI
-      } elsewhen(io.AddressxDI(1 downto 0) === B"2b10") {
-        StatexDN(3)(31 downto 0) := io.DataWritexDI
-      } otherwise {
-        StatexDN(3)(63 downto 32) := io.DataWritexDI
-      }
-    } else if (DATA_BUS_WIDTH == 64) {
-      when (!io.AddressxDI(0)) {
-        StatexDN(4) := io.DataWritexDI
-      } otherwise {
-        StatexDN(3) := io.DataWritexDI
-      }
-    } else if (DATA_BUS_WIDTH == 128) {
-      when (!io.AddressxDI(0)) {
-        StatexDN(4) := io.DataWritexDI(63 downto 0)
-        StatexDN(3) := io.DataWritexDI(127 downto 64)
-      }
-    } else {
-      // TODO: Implement for 16-bit and 8-bit bus width
-    }
-  }
+//  when (io.DP_WriteNoncexSI) {
+//    if (DATA_BUS_WIDTH == 32) {
+//      when (io.AddressxDI(1 downto 0) === B"2b00") {
+//        StatexDN(4)(31 downto 0) := io.DataWritexDI
+//      } elsewhen(io.AddressxDI(1 downto 0) === B"2b01") {
+//        StatexDN(4)(63 downto 32) := io.DataWritexDI
+//      } elsewhen(io.AddressxDI(1 downto 0) === B"2b10") {
+//        StatexDN(3)(31 downto 0) := io.DataWritexDI
+//      } otherwise {
+//        StatexDN(3)(63 downto 32) := io.DataWritexDI
+//      }
+//    } else if (DATA_BUS_WIDTH == 64) {
+//      when (!io.AddressxDI(0)) {
+//        StatexDN(4) := io.DataWritexDI
+//      } otherwise {
+//        StatexDN(3) := io.DataWritexDI
+//      }
+//    } else if (DATA_BUS_WIDTH == 128) {
+//      when (!io.AddressxDI(0)) {
+//        StatexDN(4) := io.DataWritexDI(63 downto 0)
+//        StatexDN(3) := io.DataWritexDI(127 downto 64)
+//      }
+//    } else {
+//      // TODO: Implement for 16-bit and 8-bit bus width
+//    }
+//  }
 }

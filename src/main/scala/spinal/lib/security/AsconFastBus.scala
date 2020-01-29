@@ -51,6 +51,7 @@ class AsconFastBus(UNROLLED_ROUNDS: Int = 1,
   val CP_FinalEncryptxSN = Bool
   val CP_FinalDecryptxSN = Bool
   val KeyxDN = Bits(KEY_SIZE bits)
+  val NoncexDN = Bits(128 bits)
 
   val CP_InitxSP = RegNext(CP_InitxSN) init(False)
   val CP_AssociatexSP = RegNext(CP_AssociatexSN) init(False)
@@ -59,8 +60,8 @@ class AsconFastBus(UNROLLED_ROUNDS: Int = 1,
   val CP_FinalEncryptxSP = RegNext(CP_FinalEncryptxSN) init(False)
   val CP_FinalDecryptxSP = RegNext(CP_FinalDecryptxSN) init(False)
   val KeyxDP = RegNext(KeyxDN) init(B(0, KEY_SIZE bits))
+  val NoncexDP = RegNext(NoncexDN) init(B(0, 128 bits))
 
-  val DP_WriteNoncexS = Bool
   val DP_WriteIODataxS = Bool
   val CP_DonexS = Bool
   val CP_InitxS = Bool
@@ -80,8 +81,7 @@ class AsconFastBus(UNROLLED_ROUNDS: Int = 1,
 
   io.dataReadO := B(0, DATA_BUS_WIDTH bits)
 
-  DP_WriteNoncexS := False
-  DP_WriteIODataxS := False
+//  DP_WriteIODataxS := False
 
   CP_InitxSN := CP_InitxSP
   CP_AssociatexSN := CP_AssociatexSP
@@ -112,20 +112,26 @@ class AsconFastBus(UNROLLED_ROUNDS: Int = 1,
       } elsewhen (io.addr.asUInt >= 4 && io.addr.asUInt < 8) {
         KeyxDN(io.addr(1 downto 0).asUInt * DATA_BUS_WIDTH, DATA_BUS_WIDTH bits) := io.dataWriteI
       } elsewhen (io.addr.asUInt >= 8 && io.addr.asUInt < 12) {
-        DP_WriteNoncexS := True
+        NoncexDN(io.addr(1 downto 0).asUInt * DATA_BUS_WIDTH, DATA_BUS_WIDTH bits) := io.dataWriteI
       }
     } otherwise {
       when (io.addr === 0) {
         io.dataReadO := B"32'xDEADBEEF"
       } elsewhen (io.addr === 1) {
         io.dataReadO(0) := CP_InitxSP | CP_AssociatexSP | CP_EncryptxSP | CP_DecryptxSP | CP_FinalEncryptxSP | CP_FinalDecryptxSP
-      } elsewhen (io.addr.asUInt >= 12 && io.addr.asUInt < 14) {
+      } elsewhen (io.addr.asUInt >= 12 && io.addr.asUInt < 16) {
         io.dataReadO := IODataxD(io.addr(0).asUInt * DATA_BUS_WIDTH, DATA_BUS_WIDTH bits)
       } elsewhen (io.addr.asUInt >= 16 && io.addr.asUInt < 20) {
-        if (DATA_BUS_WIDTH == 64) {
+        if (DATA_BUS_WIDTH == 32) {
+          when (io.addr(1)) {
+            io.dataReadO := StatexD(3)(io.addr(0).asUInt * DATA_BUS_WIDTH, DATA_BUS_WIDTH bits)
+          } otherwise {
+            io.dataReadO := StatexD(4)(io.addr(0).asUInt * DATA_BUS_WIDTH, DATA_BUS_WIDTH bits)
+          }
+        } else if (DATA_BUS_WIDTH == 64) {
           when (io.addr(1 downto 0) === B"00") {
             io.dataReadO := StatexD(4)
-          } elsewhen (io.addr(1 downto 0) === B"00") {
+          } elsewhen (io.addr(1 downto 0) === B"10") {
             io.dataReadO := StatexD(3)
           }
         } else {
@@ -143,11 +149,11 @@ class AsconFastBus(UNROLLED_ROUNDS: Int = 1,
     DATA_BUS_WIDTH = DATA_BUS_WIDTH,
     ADDR_BUS_WIDTH = ADDR_BUS_WIDTH)
 
-  ascon.io.AddressxDI := io.addr
-  ascon.io.DP_WriteNoncexSI := DP_WriteNoncexS
+//  ascon.io.AddressxDI := io.addr
   ascon.io.DataWritexDI := io.dataWriteI
   ascon.io.KeyxDI := KeyxDP
-  ascon.io.DP_WriteIODataxSI := DP_WriteIODataxS
+  ascon.io.NoncexDI := NoncexDP
+//  ascon.io.DP_WriteIODataxSI := DP_WriteIODataxS
   ascon.io.CP_InitxSI := CP_InitxSP
   ascon.io.CP_AssociatexSI := CP_AssociatexSP
   ascon.io.CP_EncryptxSI := CP_EncryptxSP
