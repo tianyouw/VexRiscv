@@ -19,7 +19,6 @@ case class AsconCtrlInData(config: Axi4Config) extends Bundle {
 
 case class AsconCtrlOutData(config: Axi4Config) extends Bundle {
   val data = Fragment(Bits(config.dataWidth bits))
-  val error = Bool()
 }
 
 class AsconFastCtrl(config : Axi4Config) extends Component {
@@ -67,6 +66,9 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
 
   io.in_datastream.ready := readyForDataIn
   io.in_cmdstream.ready := readyForCmdIn
+
+  io.out_datastream.payload.data.assignDontCare()
+  io.out_datastream.valid := False
 
   when (io.in_datastream.fire) {
     dataIn(dataInCounter.value * config.dataWidth, config.dataWidth bits) := io.in_datastream.data.fragment

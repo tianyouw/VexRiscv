@@ -16,7 +16,7 @@
 
 package spinal.lib.security
 
-import spinal.core._
+import spinal.core.{Bits, Vec, _}
 
 class AsconCore(UNROLLED_ROUNDS: Int = 1,
                 KEY_SIZE: Int = 128,
@@ -96,8 +96,6 @@ class AsconCore(UNROLLED_ROUNDS: Int = 1,
   val ControlStatexDP = RegNext(ControlStatexDN) init(B(0, CONTROL_STATE_SIZE bits))
 
 //  signal StatexDP : std_logic_vector(5*STATE_WORD_SIZE-1 downto 0);
-  io.CP_DonexSO := CP_DonexS
-  io.StatexDO := StatexDP
 //  signal DP_InitxS      : std_logic;
 //  signal DP_XorZKeyxS   : std_logic;
 //  signal DP_XorKeyZxS   : std_logic;
@@ -125,10 +123,14 @@ class AsconCore(UNROLLED_ROUNDS: Int = 1,
   val CP_FinalAssociatedDataxSP = RegNext(CP_FinalAssociatedDataxSN) init(False)
 
 
+  io.CP_DonexSO := CP_DonexS
+  io.StatexDO := StatexDP
+
   // BEGIN ControlProc
   CP_FinalAssociatedDataxSN := CP_FinalAssociatedDataxSP
 
   DP_InitxS := False
+  DP_RoundxSN := False
   DP_XorZKeyxS := False
   DP_XorKeyZxS := False
   DP_XorZOnexS := False
@@ -186,16 +188,12 @@ class AsconCore(UNROLLED_ROUNDS: Int = 1,
 //  variable State0XorIODataxDV                : std_logic_vector(63 downto 0);
 //  variable State1XorIODataxDV                : std_logic_vector(63 downto 0);
   val PxDV = Vec(Bits(STATE_WORD_SIZE bits), 5)
-  val RxDV = Vec(Bits(STATE_WORD_SIZE bits), 5)
-  val SxDV = Vec(Bits(STATE_WORD_SIZE bits), 5)
-  val TxDV = Vec(Bits(STATE_WORD_SIZE bits), 5)
-  val UxDV = Vec(Bits(STATE_WORD_SIZE bits), 5)
   val RoundConstxDV = Bits(64 bits)
   val State0XorIODataxDV = Bits(64 bits)
   val State1XorIODataxDV = Bits(64 bits)
 
   for (i <- 0 until 5) {
-    StatexDN(i) = StatexDP(i)
+    StatexDN(i) := StatexDP(i)
     PxDV(i) := StatexDP(i)
   }
 
@@ -203,8 +201,8 @@ class AsconCore(UNROLLED_ROUNDS: Int = 1,
     PxDV(0) := CONST_KEY_SIZE ## CONST_RATE ## CONST_ROUNDS_A ## CONST_ROUNDS_B ## B(0, 32 bits)
     PxDV(1) := io.KeyxDI(127 downto 64)
     PxDV(2) := io.KeyxDI(63 downto 0)
-    StatexDN(3) := io.NoncexDI(127 downto 64)
-    StatexDN(4) := io.NoncexDI(63 downto 0)
+    PxDV(3) := io.NoncexDI(127 downto 64)
+    PxDV(4) := io.NoncexDI(63 downto 0)
   }
 
   // For 128 variant
@@ -219,6 +217,8 @@ class AsconCore(UNROLLED_ROUNDS: Int = 1,
 
     when (DP_EncryptxS || DP_AssociatexS) {
       PxDV(0) := State0XorIODataxDV
+    } elsewhen (DP_DecryptxS) {
+      PxDV(0) := io.DataWritexDI
     }
   // For 128a variant
   } else if (DATA_BLOCK_SIZE == 128) {
@@ -235,16 +235,19 @@ class AsconCore(UNROLLED_ROUNDS: Int = 1,
     when (DP_EncryptxS || DP_AssociatexS) {
       PxDV(0) := State0XorIODataxDV
       PxDV(1) := State1XorIODataxDV
+    } elsewhen (DP_DecryptxS) {
+      PxDV(0) := io.DataWritexDI(127 downto 64)
+      PxDV(1) := io.DataWritexDI(63 downto 0)
     }
   }
 
-  PxDV(4) := PxDV(0) ^ DP_XorZOnexS.asBits(1 bit)
+  PxDV(4)(0) := PxDV(4)(0) ^ DP_XorZOnexS
 
-  when (DP_DecryptxS) {
-    PxDV(0) := io.DataWritexDI
-  }
-
-  for (r <- 0 until UNROLLED_ROUNDS) {
+  def ROUND(PxDV: Vec[Bits], r: Int): Vec[Bits] = {
+    val RxDV = Vec(Bits(STATE_WORD_SIZE bits), 5)
+    val SxDV = Vec(Bits(STATE_WORD_SIZE bits), 5)
+    val TxDV = Vec(Bits(STATE_WORD_SIZE bits), 5)
+    val UxDV = Vec(Bits(STATE_WORD_SIZE bits), 5)
     RoundConstxDV := B(0, 64 - 8 bits) ## ~B(ControlStatexDP(3 downto 0).asUInt + r, CONTROL_STATE_SIZE bits) ## B(ControlStatexDP(3 downto 0).asUInt + r, CONTROL_STATE_SIZE bits)
 
     RxDV(0) := PxDV(0) ^ PxDV(4)
@@ -271,21 +274,33 @@ class AsconCore(UNROLLED_ROUNDS: Int = 1,
     UxDV(3) := TxDV(3) ^ TxDV(3).rotateRight(10) ^ TxDV(3).rotateRight(17)
     UxDV(4) := TxDV(4) ^ TxDV(4).rotateRight(7) ^ TxDV(4).rotateRight(41)
 
-    PxDV(0) := UxDV(0)
-    PxDV(1) := UxDV(1)
-    PxDV(2) := UxDV(2)
-    PxDV(3) := UxDV(3)
-    PxDV(4) := UxDV(4)
+    UxDV
+//
+//    PxDV(0) := UxDV(0)
+//    PxDV(1) := UxDV(1)
+//    PxDV(2) := UxDV(2)
+//    PxDV(3) := UxDV(3)
+//    PxDV(4) := UxDV(4)
   }
 
-  when (DP_XorZKeyxS) {
-    UxDV(3) := UxDV(3) ^ io.KeyxDI(127 downto 64)
-    UxDV(4) := UxDV(4) ^ io.KeyxDI(63 downto 0)
+  var UxDV = PxDV
+
+  for (r <- 0 until UNROLLED_ROUNDS) {
+    UxDV = ROUND(UxDV, r)
   }
+
+
 
   when (DP_RoundxSN) {
-    for (i <- 0 until 5) {
-      StatexDN(i) := UxDV(i)
+    StatexDN(0) := UxDV(0)
+    StatexDN(1) := UxDV(1)
+    StatexDN(2) := UxDV(2)
+    StatexDN(3) := UxDV(3)
+    StatexDN(4) := UxDV(4)
+
+    when (DP_XorZKeyxS) {
+      StatexDN(3) := UxDV(3) ^ io.KeyxDI(127 downto 64)
+      StatexDN(4) := UxDV(4) ^ io.KeyxDI(63 downto 0)
     }
   }
 
