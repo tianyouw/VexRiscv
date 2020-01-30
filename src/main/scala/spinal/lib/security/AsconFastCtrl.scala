@@ -9,7 +9,7 @@ import spinal.lib.{Counter, Fragment, master, slave}
   * Created by Jiangyi on 2020-01-09.
   */
 
-case class AsconCtrlInCmd(config: Axi4Config) extends Bundle {
+case class AsconCtrlInCmd() extends Bundle {
   val mode = Bits(2 bits)
 }
 
@@ -24,7 +24,7 @@ case class AsconCtrlOutData(config: Axi4Config) extends Bundle {
 
 class AsconFastCtrl(config : Axi4Config) extends Component {
   val io = new Bundle {
-    val in_cmdstream = slave Stream(AsconCtrlInCmd(config))
+    val in_cmdstream = slave Stream(AsconCtrlInCmd())
     val in_datastream = slave Stream(AsconCtrlInData(config))
     val out_datastream = master Stream(AsconCtrlOutData(config))
   }
@@ -34,11 +34,12 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
   def ENCRYPT : Bits = "00"
   def DECRYPT : Bits = "01"
   def MACGEN : Bits = "10"
-  def MACVERIFY : Bits = "11"
+  def MACVER : Bits = "11"
 
   val key = B"128'x1234_5678_90AB_CDEF_DEAD_BEEF_CAFE_BABE"
   val nonce = B(1, 128 bits)
-  val dataIn = RegInit(B(0, 128 bits))
+  val dataIn = Reg(B(0, 128 bits))
+  val nonceIn = Reg(B(0, 128 bits))
   val dataOut = Reg(B(0, 128 bits))
   val tagOut = Reg(B(0, 128 bits))
   val mode = Reg(Bits(io.in_cmdstream.mode.getBitsWidth bits))
@@ -46,6 +47,7 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
   val readyForDataIn = RegInit(True)
   val readyForCmdIn = RegInit(True)
 
+  val doneReceivingNonce = RegInit(False)
   val finalDataIn = RegInit(False)
   val doneWritingNonce = RegInit(False)
 
@@ -71,7 +73,13 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
     finalDataIn := io.in_datastream.data.last
 
     when(dataInCounter.willOverflowIfInc) {
-      readyForDataIn := False
+      when ((mode === DECRYPT || mode === MACVER) && !doneReceivingNonce) {
+        nonceIn := dataIn
+        nonceIn(dataInCounter.value * config.dataWidth, config.dataWidth bits) := io.in_datastream.data.fragment
+        doneReceivingNonce := True
+      } otherwise {
+        readyForDataIn := False
+      }
     }
 
     dataInCounter.increment()
@@ -103,7 +111,12 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
 
     val initialize : State = new State {
       whenIsActive {
-        asconCore.io.CP_InitxSI := True
+        when (mode === DECRYPT || mode === MACVER) {
+          asconCore.io.NoncexDI := nonceIn
+          asconCore.io.CP_InitxSI := doneReceivingNonce
+        } otherwise {
+          asconCore.io.CP_InitxSI := True
+        }
         when (asconCore.io.CP_DonexSO) {
           asconCore.io.CP_InitxSI := False
           goto(encDec)
@@ -130,7 +143,7 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
             readyForDataIn := True
             when (mode === ENCRYPT || mode === DECRYPT) {
               goto(queueData)
-            } elsewhen ((mode === MACGEN || mode === MACVERIFY) && finalDataIn) {
+            } elsewhen ((mode === MACGEN || mode === MACVER) && finalDataIn) {
               goto(queueTag)
             }
           }
