@@ -28,6 +28,15 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
     val out_datastream = master Stream(AsconCtrlOutData(config))
   }
 
+  def resetAsconCmd(): Unit = {
+    asconInitReg := False
+    asconAssociateReg := False
+    asconEncryptReg := False
+    asconDecryptReg := False
+    asconFinalEncryptReg := False
+    asconFinalDecryptReg := False
+  }
+
   val asconCore = new AsconCore(DATA_BLOCK_SIZE = 128, DATA_BUS_WIDTH = 128)
 
   def ENCRYPT : Bits = "00"
@@ -36,11 +45,11 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
   def MACVER : Bits = "11"
 
   val key = B"128'x1234_5678_90AB_CDEF_DEAD_BEEF_CAFE_BABE"
-  val nonce = B(1, 128 bits)
-  val dataIn = Reg(B(0, 128 bits))
-  val nonceIn = Reg(B(0, 128 bits))
-  val dataOut = Reg(B(0, 128 bits))
-  val tagOut = Reg(B(0, 128 bits))
+  val nonce = RegInit(B(1, 128 bits))
+  val dataIn = Reg(Bits(128 bits))
+  val nonceIn = Reg(Bits(128 bits))
+  val dataOut = Reg(Bits(128 bits))
+  val tagOut = Reg(Bits(128 bits))
   val mode = Reg(Bits(io.in_cmdstream.mode.getBitsWidth bits))
 
   val readyForDataIn = RegInit(True)
@@ -53,22 +62,33 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
   val dataInCounter = Counter(0 until 4)
   val dataOutCounter = Counter(0 until 4)
 
+  val asconInitReg = RegInit(False)
+  val asconAssociateReg = RegInit(False)
+  val asconEncryptReg = RegInit(False)
+  val asconDecryptReg = RegInit(False)
+  val asconFinalEncryptReg = RegInit(False)
+  val asconFinalDecryptReg = RegInit(False)
+
   asconCore.io.KeyxDI := key
   asconCore.io.NoncexDI := nonce
   asconCore.io.DataWritexDI := dataIn
   //  ascon.io.DP_WriteIODataxSI := DP_WriteIODataxS
-  asconCore.io.CP_InitxSI := False
-  asconCore.io.CP_AssociatexSI := False
-  asconCore.io.CP_EncryptxSI := False
-  asconCore.io.CP_DecryptxSI := False
-  asconCore.io.CP_FinalEncryptxSI := False
-  asconCore.io.CP_FinalDecryptxSI := False
+  asconCore.io.CP_InitxSI := asconInitReg
+  asconCore.io.CP_AssociatexSI := asconAssociateReg
+  asconCore.io.CP_EncryptxSI := asconEncryptReg
+  asconCore.io.CP_DecryptxSI := asconDecryptReg
+  asconCore.io.CP_FinalEncryptxSI := asconFinalEncryptReg
+  asconCore.io.CP_FinalDecryptxSI := asconFinalDecryptReg
 
   io.in_datastream.ready := readyForDataIn
   io.in_cmdstream.ready := readyForCmdIn
 
   io.out_datastream.payload.data.assignDontCare()
   io.out_datastream.valid := False
+
+  when (asconCore.io.CP_DonexSO) {
+    resetAsconCmd()
+  }
 
   when (io.in_datastream.fire) {
     dataIn(dataInCounter.value * config.dataWidth, config.dataWidth bits) := io.in_datastream.data.fragment
@@ -104,7 +124,6 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
         when(io.in_cmdstream.fire) {
           mode := io.in_cmdstream.mode
           readyForCmdIn := False
-//          asconCore.io.CP_InitxSI := True
         }
 
         goto(initialize)
@@ -115,12 +134,11 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
       whenIsActive {
         when (mode === DECRYPT || mode === MACVER) {
           asconCore.io.NoncexDI := nonceIn
-          asconCore.io.CP_InitxSI := doneReceivingNonce
+          asconInitReg := doneReceivingNonce
         } otherwise {
-          asconCore.io.CP_InitxSI := True
+          asconInitReg := True
         }
         when (asconCore.io.CP_DonexSO) {
-          asconCore.io.CP_InitxSI := False
           goto(encDec)
         }
       }
@@ -128,18 +146,13 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
 
     val encDec : State = new State {
       whenIsActive {
-        asconCore.io.CP_EncryptxSI := False
-        asconCore.io.CP_DecryptxSI := False
-        asconCore.io.CP_FinalEncryptxSI :=  False
-        asconCore.io.CP_FinalDecryptxSI :=  False
         when (!readyForDataIn) {
-          asconCore.io.CP_EncryptxSI := mode =/= DECRYPT && !finalDataIn
-          asconCore.io.CP_DecryptxSI := mode === DECRYPT && !finalDataIn
-          asconCore.io.CP_FinalEncryptxSI := mode =/= DECRYPT && finalDataIn
-          asconCore.io.CP_FinalDecryptxSI := mode === DECRYPT && finalDataIn
+          asconEncryptReg := mode =/= DECRYPT && !finalDataIn
+          asconDecryptReg := mode === DECRYPT && !finalDataIn
+          asconFinalEncryptReg := mode =/= DECRYPT && finalDataIn
+          asconFinalDecryptReg := mode === DECRYPT && finalDataIn
 
           when (asconCore.io.CP_DonexSO) {
-
             dataOut := asconCore.io.IODataxDO
             tagOut := asconCore.io.StatexDO(3) ## asconCore.io.StatexDO(4)
             readyForDataIn := True

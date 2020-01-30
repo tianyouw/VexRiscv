@@ -122,6 +122,7 @@ class AsconCore(UNROLLED_ROUNDS: Int = 1,
   val CP_FinalAssociatedDataxSN = Bool
   val CP_FinalAssociatedDataxSP = RegNext(CP_FinalAssociatedDataxSN) init(False)
 
+  val asconSBox = Array.fill(UNROLLED_ROUNDS)(new AsconSBox(STATE_WORD_SIZE = STATE_WORD_SIZE, CONTROL_STATE_SIZE = CONTROL_STATE_SIZE))
 
   io.CP_DonexSO := CP_DonexS
   io.StatexDO := StatexDP
@@ -188,6 +189,8 @@ class AsconCore(UNROLLED_ROUNDS: Int = 1,
 //  variable State0XorIODataxDV                : std_logic_vector(63 downto 0);
 //  variable State1XorIODataxDV                : std_logic_vector(63 downto 0);
   val PxDV = Vec(Bits(STATE_WORD_SIZE bits), 5)
+  val UxDV = Vec(Bits(STATE_WORD_SIZE bits), 5)
+
   val RoundConstxDV = Bits(64 bits)
   val State0XorIODataxDV = Bits(64 bits)
   val State1XorIODataxDV = Bits(64 bits)
@@ -241,53 +244,67 @@ class AsconCore(UNROLLED_ROUNDS: Int = 1,
     }
   }
 
-  PxDV(4)(0) := PxDV(4)(0) ^ DP_XorZOnexS
+//  PxDV(4)(0) := PxDV(4)(0) ^ DP_XorZOnexS
 
-  def ROUND(PxDV: Vec[Bits], r: Int): Vec[Bits] = {
-    val RxDV = Vec(Bits(STATE_WORD_SIZE bits), 5)
-    val SxDV = Vec(Bits(STATE_WORD_SIZE bits), 5)
-    val TxDV = Vec(Bits(STATE_WORD_SIZE bits), 5)
-    val UxDV = Vec(Bits(STATE_WORD_SIZE bits), 5)
-    RoundConstxDV := B(0, 64 - 8 bits) ## ~B(ControlStatexDP(3 downto 0).asUInt + r, CONTROL_STATE_SIZE bits) ## B(ControlStatexDP(3 downto 0).asUInt + r, CONTROL_STATE_SIZE bits)
+  for (i <- 0 until UNROLLED_ROUNDS) {
+    if (i == 0) {
+      asconSBox(0).io.PxDV := PxDV
+      asconSBox(0).io.PxDV(4)(0) := PxDV(4)(0) ^ DP_XorZOnexS
+    } else {
+      asconSBox(i).io.PxDV := asconSBox(i - 1).io.UxDV
+    }
+    asconSBox(i).io.round := i
+    asconSBox(i).io.controlState := ControlStatexDP
 
-    RxDV(0) := PxDV(0) ^ PxDV(4)
-    RxDV(1) := PxDV(1)
-    RxDV(2) := PxDV(2) ^ PxDV(1) ^ RoundConstxDV
-    RxDV(3) := PxDV(3)
-    RxDV(4) := PxDV(4) ^ PxDV(3)
-
-    SxDV(0) := RxDV(0) ^ (~RxDV(1) & RxDV(2))
-    SxDV(1) := RxDV(1) ^ (~RxDV(2) & RxDV(3))
-    SxDV(2) := RxDV(2) ^ (~RxDV(3) & RxDV(4))
-    SxDV(3) := RxDV(3) ^ (~RxDV(4) & RxDV(0))
-    SxDV(4) := RxDV(4) ^ (~RxDV(0) & RxDV(1))
-
-    TxDV(0) := SxDV(0) ^ SxDV(4)
-    TxDV(1) := SxDV(1) ^ SxDV(0)
-    TxDV(2) := ~SxDV(2)
-    TxDV(3) := SxDV(3) ^ SxDV(2)
-    TxDV(4) := SxDV(4)
-
-    UxDV(0) := TxDV(0) ^ TxDV(0).rotateRight(19) ^ TxDV(0).rotateRight(28)
-    UxDV(1) := TxDV(1) ^ TxDV(1).rotateRight(61) ^ TxDV(1).rotateRight(39)
-    UxDV(2) := TxDV(2) ^ TxDV(2).rotateRight(1) ^ TxDV(2).rotateRight(6)
-    UxDV(3) := TxDV(3) ^ TxDV(3).rotateRight(10) ^ TxDV(3).rotateRight(17)
-    UxDV(4) := TxDV(4) ^ TxDV(4).rotateRight(7) ^ TxDV(4).rotateRight(41)
-
-    UxDV
+    if (i == UNROLLED_ROUNDS - 1) {
+      UxDV := asconSBox(i).io.UxDV
+    }
+  }
+//  def ROUND(PxDV: Vec[Bits], r: Int): Vec[Bits] = {
+//    val RxDV = Vec(Bits(STATE_WORD_SIZE bits), 5)
+//    val SxDV = Vec(Bits(STATE_WORD_SIZE bits), 5)
+//    val TxDV = Vec(Bits(STATE_WORD_SIZE bits), 5)
+//    val UxDV = Vec(Bits(STATE_WORD_SIZE bits), 5)
+//    RoundConstxDV := B(0, 64 - 8 bits) ## ~B(ControlStatexDP(3 downto 0).asUInt + r, CONTROL_STATE_SIZE bits) ## B(ControlStatexDP(3 downto 0).asUInt + r, CONTROL_STATE_SIZE bits)
+//
+//    RxDV(0) := PxDV(0) ^ PxDV(4)
+//    RxDV(1) := PxDV(1)
+//    RxDV(2) := PxDV(2) ^ PxDV(1) ^ RoundConstxDV
+//    RxDV(3) := PxDV(3)
+//    RxDV(4) := PxDV(4) ^ PxDV(3)
+//
+//    SxDV(0) := RxDV(0) ^ (~RxDV(1) & RxDV(2))
+//    SxDV(1) := RxDV(1) ^ (~RxDV(2) & RxDV(3))
+//    SxDV(2) := RxDV(2) ^ (~RxDV(3) & RxDV(4))
+//    SxDV(3) := RxDV(3) ^ (~RxDV(4) & RxDV(0))
+//    SxDV(4) := RxDV(4) ^ (~RxDV(0) & RxDV(1))
+//
+//    TxDV(0) := SxDV(0) ^ SxDV(4)
+//    TxDV(1) := SxDV(1) ^ SxDV(0)
+//    TxDV(2) := ~SxDV(2)
+//    TxDV(3) := SxDV(3) ^ SxDV(2)
+//    TxDV(4) := SxDV(4)
+//
+//    UxDV(0) := TxDV(0) ^ TxDV(0).rotateRight(19) ^ TxDV(0).rotateRight(28)
+//    UxDV(1) := TxDV(1) ^ TxDV(1).rotateRight(61) ^ TxDV(1).rotateRight(39)
+//    UxDV(2) := TxDV(2) ^ TxDV(2).rotateRight(1) ^ TxDV(2).rotateRight(6)
+//    UxDV(3) := TxDV(3) ^ TxDV(3).rotateRight(10) ^ TxDV(3).rotateRight(17)
+//    UxDV(4) := TxDV(4) ^ TxDV(4).rotateRight(7) ^ TxDV(4).rotateRight(41)
+//
+//    UxDV
 //
 //    PxDV(0) := UxDV(0)
 //    PxDV(1) := UxDV(1)
 //    PxDV(2) := UxDV(2)
 //    PxDV(3) := UxDV(3)
 //    PxDV(4) := UxDV(4)
-  }
+//  }
 
-  var UxDV = PxDV
-
-  for (r <- 0 until UNROLLED_ROUNDS) {
-    UxDV = ROUND(UxDV, r)
-  }
+//  var UxDV = PxDV
+//
+//  for (r <- 0 until UNROLLED_ROUNDS) {
+//    UxDV = ROUND(UxDV, r)
+//  }
 
 
 
