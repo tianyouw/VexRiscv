@@ -19,7 +19,8 @@ object Axi4SharedSecurityCtrl {
       useRegion = false,
       useCache = false,
       useProt = false,
-      useQos = false
+      useQos = false //,
+      // useStrb = false
     )
   }
 }
@@ -31,7 +32,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   val writeToRam = Reg(Bool())
   val error = Bool()
 
-  final val PASSTHROUGH = false
+  // final val PASSTHROUGH = false
 
   // -------------Tree calculation stuff end
   val io = new Bundle {
@@ -71,9 +72,9 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   def CALCULATE_NEW_TAG_STATE : UInt = 6
   def RETURN_DATA_STATE : UInt = 7
 
-  if (PASSTHROUGH) {
-    io.axi <> io.sdramAxi
-  } else {
+  // if (PASSTHROUGH) {
+  //   io.axi <> io.sdramAxi
+  // } else {
     val numLayers = getNumLayers(memorySizeBytes)
 
     val layerAddressVec = Vec(UInt(axiConfig.addressWidth bits), numLayers)
@@ -125,10 +126,35 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
     def bytePosition(addr: UInt): UInt = addr(4 downto 2)
 
+    // def combineNewDataWithOriginal(originalData: Bits, newData: Bits, strbMask: Bits): Bits = {
+    //   assert(originalData.getWidth == newData.getWidth)
+    //   assert(newData.getWidth == 32)
+    //   val outData = newData
+
+    //   when(strbMask(3)) {
+    //     outData(31 downto 24) := newData(31 downto 24)
+    //   }
+
+    //   when(strbMask(2)) {
+    //     outData(23 downto 16) := newData(23 downto 16)
+    //   }
+
+    //   when(strbMask(1)) {
+    //     outData(15 downto 8) := newData(15 downto 8)
+    //   }
+
+    //   when(strbMask(0)) {
+    //     outData(7 downto 0) := newData(7 downto 0)
+    //   }
+
+    //   outData
+    // }
+    
     def combineNewDataWithOriginal(originalData: Bits, newData: Bits, strbMask: Bits): Bits = {
       assert(originalData.getWidth == newData.getWidth)
       assert(newData.getWidth == 32)
-      val outData = newData
+      val outData = Bits(32 bits)
+      outData := newData
 
       when(strbMask(3)) {
         outData(31 downto 24) := newData(31 downto 24)
@@ -700,5 +726,5 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
         }
       }
     }
-  }
+  
 }

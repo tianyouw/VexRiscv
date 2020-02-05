@@ -168,7 +168,7 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
           outTag := outTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment))
           // Throw error when tags don't match; except when tag or nonce is 0, because that means it's invalid
           when ((outTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## (lastData.fragment ^ currData.fragment))) =/= inTag && externalNonce =/= 0 && inTag =/= 0) {
-            error := True
+            // error := True
           }
         } otherwise { // shouldn't go here
           burstCntr.clear()
@@ -280,7 +280,7 @@ case class DummyCAESARCtrl(config : Axi4Config) extends Component {
           last := True
 
           when (outTag =/= (inTag.rotateLeft(32) | (B(0, 128 - config.dataWidth bits) ## currData.fragment))) {
-            error := True
+            // error := True
           }
         }
 
