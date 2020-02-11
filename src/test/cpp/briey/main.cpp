@@ -186,8 +186,10 @@ public:
 					cout << "SDRAM : Write Wrong DQ direction" << endl;
 
 				for(uint32_t byteId = 0;byteId < config->byteCount;byteId++){
-					if(((*io->DQM >> byteId) & 1) == 0)
+					if(((*io->DQM >> byteId) & 1) == 0) {
+						// cout << "Writing to bank #" <<  (int) (*io->BA) << ": ";
 						banks[*io->BA].write(*io->ADDR, byteId ,io->DQ_write[byteId]);
+					}
 				}
 				break;
 
@@ -202,6 +204,7 @@ public:
 					//cout << "SDRAM : READ wrong DQM" << endl;
 
 				for(uint32_t byteId = 0;byteId < config->byteCount;byteId++){
+					// cout << "Reading from bank #" << (int) (*io->BA) << ": ";
 					readShifter[byteId] = banks[*io->BA].read(*io->ADDR, byteId);
 				}
 				break;

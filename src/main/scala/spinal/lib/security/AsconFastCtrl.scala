@@ -49,7 +49,7 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
   val dataIn = Reg(Bits(128 bits))
   val nonceIn = Reg(Bits(128 bits))
   val dataOut = Reg(Bits(128 bits))
-  val tagOut = Reg(Bits(128 bits))
+  val tagOut = Bits(128 bits)
   val mode = Reg(Bits(io.in_cmdstream.mode.getBitsWidth bits))
 
   val readyForDataIn = RegInit(True)
@@ -69,6 +69,9 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
   val asconFinalEncryptReg = RegInit(False)
   val asconFinalDecryptReg = RegInit(False)
 
+  val asconRoundsDoneReg = RegInit(False)
+  val dataQueuingDoneReg = RegInit(False)
+
   asconCore.io.KeyxDI := key
   asconCore.io.NoncexDI := nonce
   asconCore.io.DataWritexDI := dataIn
@@ -85,6 +88,8 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
 
   io.out_datastream.payload.data.assignDontCare()
   io.out_datastream.valid := False
+
+  tagOut := asconCore.io.StatexDO(3) ## asconCore.io.StatexDO(4)
 
   when (io.in_datastream.fire) {
     dataIn(dataInCounter.value * config.dataWidth, config.dataWidth bits) := io.in_datastream.data.fragment
@@ -132,20 +137,20 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
 
     val encDec : State = new State {
       whenIsActive {
+        dataOut := asconCore.io.IODataxDO
         when (!readyForDataIn) {
           asconEncryptReg := mode =/= DECRYPT && !finalDataIn
           asconDecryptReg := mode === DECRYPT && !finalDataIn
           asconFinalEncryptReg := mode =/= DECRYPT && finalDataIn
           asconFinalDecryptReg := mode === DECRYPT && finalDataIn
 
-          dataOut := asconCore.io.IODataxDO
-          when (asconCore.io.CP_DonexSO) {
-            tagOut := asconCore.io.StatexDO(3) ## asconCore.io.StatexDO(4)
+          when (mode === ENCRYPT || mode === DECRYPT) {
+            goto(queueData)
+          } elsewhen (asconCore.io.CP_DonexSO) {
             readyForDataIn := True
             resetAsconCmd()
-            when (mode === ENCRYPT || mode === DECRYPT) {
-              goto(queueData)
-            } elsewhen ((mode === MACGEN || mode === MACVER) && finalDataIn) {
+
+            when ((mode === MACGEN || mode === MACVER) && finalDataIn) {
               goto(queueTag)
             }
           }
@@ -156,30 +161,47 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
     }
 
     val queueData : State = new State {
+      onEntry {
+        asconRoundsDoneReg := False
+        dataQueuingDoneReg := False
+      }
+
       whenIsActive {
+        when (asconCore.io.CP_DonexSO) {
+          readyForDataIn := True
+          resetAsconCmd()
+          asconRoundsDoneReg := True
+        }
         when (doneWritingNonce || mode === DECRYPT) {
           io.out_datastream.payload.data.fragment := dataOut(dataOutCounter.value * config.dataWidth, config.dataWidth bits)
           io.out_datastream.payload.data.last := dataOutCounter.willOverflowIfInc && finalDataIn
-          io.out_datastream.valid := True
+          io.out_datastream.valid := !dataQueuingDoneReg
           when(io.out_datastream.fire) {
             when(dataOutCounter.willOverflowIfInc) {
-              when(finalDataIn) {
-                goto(queueTag)
-              } otherwise {
-                goto(encDec)
-              }
+              dataQueuingDoneReg := True
             }
 
             dataOutCounter.increment()
           }
         }
+
+        when (asconRoundsDoneReg && dataQueuingDoneReg) {
+          when(finalDataIn) {
+            goto(queueTag)
+          } otherwise {
+            goto(encDec)
+          }
+        }
       }
 
-      onExit(dataOutCounter.clear())
+      onExit {
+        dataOutCounter.clear()
+        asconRoundsDoneReg := False
+        dataQueuingDoneReg := False
+      }
     }
 
     val queueTag : State = new State {
-//      onEntry(queueOpCount.clear())
 
       whenIsActive {
         when (doneWritingNonce || mode === DECRYPT || mode === MACVER) {

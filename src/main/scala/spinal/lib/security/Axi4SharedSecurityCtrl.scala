@@ -42,8 +42,8 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
   // -------------Tree calculation stuff start
   final val treeAry = 4
-  final val treeStart = 0x2000000 // TODO: andrew, replace this with whatever you want
-  final val memorySizeBytes = 32 * 1024 * 1024 // TODO: andrew, get this from somewhere else?
+  final val treeStart = 0x1000000 // TODO: andrew, replace this with whatever you want
+  final val memorySizeBytes = 16 * 1024 * 1024 // TODO: andrew, get this from somewhere else?
   final val blockSizeBytes = 32 //24
 
 //  def getParent(block: Int) = (block - 1) / treeAry

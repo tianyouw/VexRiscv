@@ -114,7 +114,7 @@ class AsconCore(UNROLLED_ROUNDS: Int = 1,
   val DP_EncryptxS = Bool
   val DP_DecryptxS = Bool
   val DP_AssociatexS = Bool
-  val CP_DonexS = RegInit(False)
+  val CP_DonexS = Bool
 
   val DP_RoundxSN = Bool
   val DP_RoundxSP = RegNext(DP_RoundxSN) init(False)
