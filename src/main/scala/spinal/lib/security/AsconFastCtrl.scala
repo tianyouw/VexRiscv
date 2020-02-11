@@ -37,7 +37,7 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
     asconFinalDecryptReg := False
   }
 
-  val asconCore = new AsconCore(DATA_BLOCK_SIZE = 128, DATA_BUS_WIDTH = 128)
+  val asconCore = new AsconCore(DATA_BLOCK_SIZE = 128, DATA_BUS_WIDTH = 128, ROUNDS_B = 8) // Settings for Ascon-128a
 
   def ENCRYPT : Bits = "00"
   def DECRYPT : Bits = "01"
@@ -86,10 +86,6 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
   io.out_datastream.payload.data.assignDontCare()
   io.out_datastream.valid := False
 
-  when (asconCore.io.CP_DonexSO) {
-    resetAsconCmd()
-  }
-
   when (io.in_datastream.fire) {
     dataIn(dataInCounter.value * config.dataWidth, config.dataWidth bits) := io.in_datastream.data.fragment
     finalDataIn := io.in_datastream.data.last
@@ -107,26 +103,15 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
     dataInCounter.increment()
   }
 
-  when (io.in_cmdstream.fire || dataOutCounter.value > 0) {
-    io.out_datastream.payload.data.fragment := nonce(dataOutCounter.value * config.dataWidth, config.dataWidth bits)
-    io.out_datastream.payload.data.last := dataOutCounter.willOverflowIfInc
-
-    when (dataOutCounter.willOverflowIfInc) {
-      doneWritingNonce := True
-    }
-
-    dataOutCounter.increment()
-  }
-
   val fsm = new StateMachine {
     val idle: State = new State with EntryPoint {
       whenIsActive {
         when(io.in_cmdstream.fire) {
           mode := io.in_cmdstream.mode
           readyForCmdIn := False
-        }
 
-        goto(initialize)
+          goto(initialize)
+        }
       }
     }
 
@@ -139,6 +124,7 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
           asconInitReg := True
         }
         when (asconCore.io.CP_DonexSO) {
+          resetAsconCmd()
           goto(encDec)
         }
       }
@@ -152,10 +138,11 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
           asconFinalEncryptReg := mode =/= DECRYPT && finalDataIn
           asconFinalDecryptReg := mode === DECRYPT && finalDataIn
 
+          dataOut := asconCore.io.IODataxDO
           when (asconCore.io.CP_DonexSO) {
-            dataOut := asconCore.io.IODataxDO
             tagOut := asconCore.io.StatexDO(3) ## asconCore.io.StatexDO(4)
             readyForDataIn := True
+            resetAsconCmd()
             when (mode === ENCRYPT || mode === DECRYPT) {
               goto(queueData)
             } elsewhen ((mode === MACGEN || mode === MACVER) && finalDataIn) {
@@ -170,7 +157,7 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
 
     val queueData : State = new State {
       whenIsActive {
-        when (doneWritingNonce) {
+        when (doneWritingNonce || mode === DECRYPT) {
           io.out_datastream.payload.data.fragment := dataOut(dataOutCounter.value * config.dataWidth, config.dataWidth bits)
           io.out_datastream.payload.data.last := dataOutCounter.willOverflowIfInc && finalDataIn
           io.out_datastream.valid := True
@@ -195,7 +182,7 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
 //      onEntry(queueOpCount.clear())
 
       whenIsActive {
-        when (doneWritingNonce) {
+        when (doneWritingNonce || mode === DECRYPT || mode === MACVER) {
           io.out_datastream.payload.data.fragment := tagOut(dataOutCounter.value * config.dataWidth, config.dataWidth bits)
           io.out_datastream.payload.data.last := dataOutCounter.willOverflowIfInc
           io.out_datastream.valid := True
@@ -211,12 +198,27 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
 
       onExit {
         dataOutCounter.clear()
-        nonce := B(nonce.asUInt + 1, 128 bits)
+        when (mode === ENCRYPT || mode === MACGEN) {
+          nonce := B(nonce.asUInt + 1, 128 bits)
+        }
         doneWritingNonce := False
+        doneReceivingNonce := False
         readyForDataIn := True
         finalDataIn := False
         readyForCmdIn := True
       }
     }
+  }
+
+  when (!doneWritingNonce && ((mode === ENCRYPT || mode === MACGEN) &&
+        (fsm.isActive(fsm.initialize) || fsm.isActive(fsm.encDec) || fsm.isActive(fsm.queueData) || fsm.isActive(fsm.queueTag)))) {
+    io.out_datastream.payload.data.fragment := nonce(dataOutCounter.value * config.dataWidth, config.dataWidth bits)
+    io.out_datastream.payload.data.last := dataOutCounter.willOverflowIfInc
+    io.out_datastream.valid := True
+    when (dataOutCounter.willOverflowIfInc) {
+      doneWritingNonce := True
+    }
+
+    dataOutCounter.increment()
   }
 }

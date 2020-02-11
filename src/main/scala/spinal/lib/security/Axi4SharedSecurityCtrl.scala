@@ -72,21 +72,20 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   def CALCULATE_NEW_TAG_STATE : UInt = 6
   def RETURN_DATA_STATE : UInt = 7
 
-  if (PASSTHROUGH) {
-    io.axi <> io.sdramAxi
-  } else {
+//  if (PASSTHROUGH) {
+//    io.axi <> io.sdramAxi
+//  } else {
     val numLayers = getNumLayers(memorySizeBytes)
 
     val layerAddressVec = Vec(UInt(axiConfig.addressWidth bits), numLayers)
 
     var blockNum = 0
     for (layer <- 0 until numLayers) {
-      layerAddressVec(layer) := treeStart + blockNum * 24
+      layerAddressVec(layer) := treeStart + blockNum * blockSizeBytes
       blockNum = getChild(blockNum, 0)
     }
 
-    val debugFsmState = RegInit(U(0, 3 bits))
-    val layerIndexReg = RegInit(U(numLayers))
+  val layerIndexReg = RegInit(U(numLayers))
     // Data = 8 bytes, tag = 4 bytes, nonce = 4 bytes
 //    val dataInFifo = StreamFifo(dataType = CAESARCtrlInData(axiConfig), depth = 16)
 //    val dataOutFifo = StreamFifo(dataType = CAESARCtrlOutData(axiConfig), depth = 16)
@@ -235,7 +234,8 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     val decryptStateReadParentNodeReg = RegInit(False)
     val decryptStateDoneDataDecryptReg = RegInit(False)
 
-    val writeDataStateDoneWritingReg = RegInit(False)
+    val writeDataStateDoneStoringNonceReg = RegInit(False)
+    val calculateNewTagStateDoneReceivingNonceReg = RegInit(False)
 
     val calculateNewTagStateDataInFifoValidReg = RegInit(True)
 
@@ -303,7 +303,6 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
         onEntry {
           pendingWordsCounter := 0
           sdramWrEnReg := False
-          debugFsmState := IDLE_STATE
         }
 
         whenIsActive {
@@ -313,7 +312,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
               axiSharedCmdReg := io.axi.sharedCmd
               writeDataCompleteReg := False
               decryptStateReadParentNodeReg := False
-              writeDataStateDoneWritingReg := False
+              writeDataStateDoneStoringNonceReg := False
               calculateNewTagStateDataInFifoValidReg := True
               verifyTagStateReadCompleteReg := False
 
@@ -353,7 +352,6 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
       val verifyTagFromSdramState: State = new State {
         onEntry {
           verifyTagStateReadCompleteReg := False
-          debugFsmState := VERIFY_TAG_FROM_SDRAM_STATE
         }
         whenIsActive {
           //          when(isRootOfTree()) {
@@ -376,7 +374,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
             io.sdramAxi.sharedCmd.addr := getParentNodeAddr()
             io.sdramAxi.sharedCmd.len := 7 // Burst of 8, since 128 bit nonce + 128 bit tag
           } otherwise {
-            io.sdramAxi.sharedCmd.addr := getCurrentTagNodeFirstSiblingAddr() + (decryptVerifyCounter << 3)
+            io.sdramAxi.sharedCmd.addr := getCurrentTagNodeFirstSiblingAddr() + ((decryptVerifyCounter - 8) << 3)
             io.sdramAxi.sharedCmd.len := 3 // Burst of 4, since 128 bit nonces
 
           }
@@ -401,7 +399,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
           when(io.sdramAxi.readRsp.fire) {
             when(decryptVerifyCounter.value >= 8) {
-              nonceVecReg(decryptVerifyCounter.value(3 downto 0)) := io.sdramAxi.readRsp.data
+              nonceVecReg((decryptVerifyCounter.value - 8).resized) := io.sdramAxi.readRsp.data
             }
 
             when(io.sdramAxi.readRsp.last) {
@@ -417,7 +415,8 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           }
 
           when(asconFastCtrl.io.out_datastream.fire) {
-            when(asconFastCtrl.io.out_datastream.data.fragment === tagSetAsideFifo.io.pop.payload) {
+            when(asconFastCtrl.io.out_datastream.data.fragment === tagSetAsideFifo.io.pop.payload ||
+                  tagSetAsideFifo.io.pop.payload === 0) {
               tagPartsVerifiedCounter.increment()
             }
           }
@@ -461,7 +460,6 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
         onEntry {
           decryptStateReadParentNodeReg := False
           decryptStateDoneDataDecryptReg := False
-          debugFsmState := DECRYPT_DATA_STATE
         }
 
         whenIsActive {
@@ -527,7 +525,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
                 decryptStateDoneDataDecryptReg := True
               }
             } otherwise {
-              when(asconFastCtrl.io.out_datastream.data.fragment === tagSetAsideFifo.io.pop.payload) {
+              when(asconFastCtrl.io.out_datastream.data.fragment === tagSetAsideFifo.io.pop.payload || tagSetAsideFifo.io.pop.payload === 0) {
                 tagPartsVerifiedCounter.increment()
               }
             }
@@ -548,7 +546,6 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
       val encryptDataState: State = new State {
         onEntry {
-          debugFsmState := ENCRYPT_DATA_STATE
         }
         whenIsActive {
           asconFastCtrl.io.in_cmdstream.mode := asconFastCtrl.ENCRYPT
@@ -583,8 +580,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
       val writeDataState: State = new State {
         onEntry {
-          writeDataStateDoneWritingReg := False
-          debugFsmState := WRITE_DATA_STATE
+          writeDataStateDoneStoringNonceReg := False
         }
 
         whenIsActive {
@@ -596,28 +592,37 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           io.sdramAxi.sharedCmd.len := 7 // 8 data bursts
           io.sdramAxi.writeData.last := pendingWordsCounter.willOverflowIfInc
 
-          io.sdramAxi.writeData.valid := !writeDataStateDoneWritingReg && dataOutFifo.io.pop.valid && sdramWrEnReg
+          io.sdramAxi.writeData.valid := writeDataStateDoneStoringNonceReg && dataOutFifo.io.pop.valid && sdramWrEnReg
           //          otherwise {
           //            io.sdramAxi.writeData.strb := "1111"
           //          }
 
-          when(io.sdramAxi.writeData.fire) {
-            pendingWordsCounter.increment()
-            when(pendingWordsCounter.willOverflowIfInc) {
-              writeDataStateDoneWritingReg := True
-            }
-          }
+          nextNonceTagBlockFifo.io.push.valid := False
+          dataOutFifo.io.pop.ready := io.sdramAxi.writeData.ready
 
-          when(writeDataStateDoneWritingReg) {
+//          when(io.sdramAxi.writeData.fire) {
+//            pendingWordsCounter.increment()
+//            when(pendingWordsCounter.willOverflowIfInc) {
+//              writeDataStateDoneStoringNonceReg := True
+//            }
+//          }
+
+          when(!writeDataStateDoneStoringNonceReg) {
             nextNonceTagBlockFifo.io.push.valid := dataOutFifo.io.pop.valid
             nextNonceTagBlockFifo.io.push.payload := dataOutFifo.io.pop.data
             dataOutFifo.io.pop.ready := nextNonceTagBlockFifo.io.push.ready
+          }
 
-            when(dataOutFifo.io.pop.fire && dataOutFifo.io.pop.data.last) {
-              sdramAxiSharedCmdValidReg := True
-              sdramWrEnReg := True
-              goto(writeNewTagState)
+          when(dataOutFifo.io.pop.fire && dataOutFifo.io.pop.data.last) {
+            when (!writeDataStateDoneStoringNonceReg) {
+              writeDataStateDoneStoringNonceReg := True
             }
+          }
+
+          when (io.sdramAxi.writeRsp.fire) {
+            sdramAxiSharedCmdValidReg := True
+            sdramWrEnReg := True
+            goto(writeNewTagState)
           }
 
           onExit {
@@ -631,7 +636,6 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
       val writeNewTagState: State = new State {
         onEntry {
-          debugFsmState := WRITE_NEW_TAG_STATE
         }
         whenIsActive {
           when(io.sdramAxi.sharedCmd.fire) {
@@ -642,9 +646,13 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
           io.sdramAxi.writeData.valid := nextNonceTagBlockFifo.io.pop.valid && sdramWrEnReg
           io.sdramAxi.writeData.data := nextNonceTagBlockFifo.io.pop.payload.fragment
-          io.sdramAxi.writeData.last := nextNonceTagBlockFifo.io.pop.payload.last
+          io.sdramAxi.writeData.last := pendingWordsCounter.willOverflowIfInc
           io.sdramAxi.writeData.strb := "1111"
           nextNonceTagBlockFifo.io.pop.ready := io.sdramAxi.writeData.ready
+
+          nextNonceTagBlockFifo.io.push.valid := dataOutFifo.io.pop.valid
+          nextNonceTagBlockFifo.io.push.payload := dataOutFifo.io.pop.data
+          dataOutFifo.io.pop.ready := nextNonceTagBlockFifo.io.push.ready
 
           when(io.sdramAxi.writeData.fire) {
             when(pendingWordsCounter.value < 4) {
@@ -654,11 +662,10 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           }
 
           when(io.sdramAxi.writeRsp.fire) {
-            val index = getSiblingIndex()
-            nonceVecReg((index << 2) (3 downto 0)) := tempNonceReg(0)
-            nonceVecReg(((index << 2) + 1) (3 downto 0)) := tempNonceReg(1)
-            nonceVecReg(((index << 2) + 2) (3 downto 0)) := tempNonceReg(2)
-            nonceVecReg(((index << 2) + 3) (3 downto 0)) := tempNonceReg(3)
+            nonceVecReg((getSiblingIndex() << 2).resized) := tempNonceReg(0)
+            nonceVecReg(((getSiblingIndex() << 2) + 1).resized) := tempNonceReg(1)
+            nonceVecReg(((getSiblingIndex() << 2) + 2).resized) := tempNonceReg(2)
+            nonceVecReg(((getSiblingIndex() << 2) + 3).resized) := tempNonceReg(3)
 
             when(isRootOfTree()) {
               busyReg := False
@@ -684,7 +691,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
       val calculateNewTagState: State = new State {
         onEntry {
           calculateNewTagStateDataInFifoValidReg := True
-          debugFsmState := CALCULATE_NEW_TAG_STATE
+          calculateNewTagStateDoneReceivingNonceReg := False
         }
 
         whenIsActive {
@@ -710,16 +717,20 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           asconFastCtrl.io.out_datastream.ready := nextNonceTagBlockFifo.io.push.ready
 
           when(asconFastCtrl.io.out_datastream.fire && asconFastCtrl.io.out_datastream.data.last) {
-            updateToNextParentNodeAddrReg()
-            when(isParentRootOfTree()) {
-              sdramAxiSharedCmdValidReg := True
-              sdramWrEnReg := True
-              goto(writeNewTagState)
+            when (!calculateNewTagStateDoneReceivingNonceReg) {
+              calculateNewTagStateDoneReceivingNonceReg := True
             } otherwise {
-              sdramAxiSharedCmdValidReg := True
-              asconInputCmdValidReg := True
-              sdramWrEnReg := False
-              goto(verifyTagFromSdramState)
+              updateToNextParentNodeAddrReg()
+              when(isParentRootOfTree()) {
+                sdramAxiSharedCmdValidReg := True
+                sdramWrEnReg := True
+                goto(writeNewTagState)
+              } otherwise {
+                sdramAxiSharedCmdValidReg := True
+                asconInputCmdValidReg := True
+                sdramWrEnReg := False
+                goto(verifyTagFromSdramState)
+              }
             }
           }
         }
@@ -731,7 +742,6 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
       // State for returning data to dcache
       val returnDataState: State = new State {
         onEntry {
-          debugFsmState := RETURN_DATA_STATE
         }
         whenIsActive {
           io.axi.readRsp.valid := dataSetAsideFifo.io.pop.valid
@@ -753,5 +763,5 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
         }
       }
     }
-  }
+//  }
 }
