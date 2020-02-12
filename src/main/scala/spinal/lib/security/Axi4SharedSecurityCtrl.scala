@@ -19,8 +19,7 @@ object Axi4SharedSecurityCtrl {
       useRegion = false,
       useCache = false,
       useProt = false,
-      useQos = false,
-      useStrb = false
+      useQos = false
     )
   }
 }

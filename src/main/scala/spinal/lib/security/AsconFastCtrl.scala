@@ -37,7 +37,8 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
     asconFinalDecryptReg := False
   }
 
-  val asconCore = new AsconCore(DATA_BLOCK_SIZE = 128, DATA_BUS_WIDTH = 128, ROUNDS_B = 8) // Settings for Ascon-128a
+  // Settings for Ascon-128a; # of unrolled rounds is GCD of ROUNDS_A and ROUNDS_B
+  val asconCore = new AsconCore(DATA_BLOCK_SIZE = 128, DATA_BUS_WIDTH = 128, ROUNDS_B = 8, UNROLLED_ROUNDS = 4)
 
   def ENCRYPT : Bits = "00"
   def DECRYPT : Bits = "01"
