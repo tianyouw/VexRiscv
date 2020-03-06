@@ -42,6 +42,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
   // -------------Tree calculation stuff start
   final val treeAry = 4
   final val treeStart = 0x1000000 // TODO: andrew, replace this with whatever you want
+  final val directAccessStart = 0x4000000
   final val memorySizeBytes = 16 * 1024 * 1024 // TODO: andrew, get this from somewhere else?
   final val blockSizeBytes = 32 //24
 
@@ -297,7 +298,22 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
       asconInputCmdValidReg := False
     }
 
+    val bypassIsWriteReg = RegInit(False)
     val fsm = new StateMachine {
+      val bypassState: State = new State {
+        whenIsActive {
+          io.axi <> io.sdramAxi
+          io.sdramAxi.sharedCmd.valid.allowOverride
+          io.sdramAxi.sharedCmd.valid := False
+          when (io.axi.sharedCmd.addr >= directAccessStart) {
+            io.sdramAxi.sharedCmd.addr := io.axi.sharedCmd.addr - directAccessStart
+          }
+          when ((!bypassIsWriteReg && io.axi.readRsp.fire && io.axi.readRsp.last) || (bypassIsWriteReg && io.axi.writeRsp.fire)) {
+            goto(idleState)
+          }
+        }
+      }
+
       val idleState: State = new State with EntryPoint {
         onEntry {
           pendingWordsCounter := 0
@@ -342,8 +358,31 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
               asconInputCmdValidReg := True
               goto(verifyTagFromSdramState)
             }
-          } otherwise {
+          } elsewhen(io.axi.sharedCmd.valid && io.axi.sharedCmd.addr >= treeStart && io.axi.sharedCmd.addr < directAccessStart) {
             io.axi <> io.sdramAxi
+            bypassIsWriteReg := io.axi.sharedCmd.write
+            when (io.axi.sharedCmd.fire) {
+              goto(bypassState)
+            }
+          } elsewhen(io.axi.sharedCmd.valid && io.axi.sharedCmd.addr >= directAccessStart) {
+            io.axi <> io.sdramAxi
+            bypassIsWriteReg := io.axi.sharedCmd.write
+            io.sdramAxi.sharedCmd.addr.allowOverride
+            //            io.axi.writeData <> io.sdramAxi.writeData
+//            io.axi.writeRsp <> io.sdramAxi.writeRsp
+//            io.axi.readRsp <> io.sdramAxi.readRsp
+            io.sdramAxi.sharedCmd.addr := io.axi.sharedCmd.addr - directAccessStart
+            when (io.axi.sharedCmd.fire) {
+              goto(bypassState)
+            }
+//            goto(bypassOffsetState)
+//            io.sdramAxi.sharedCmd.size := io.axi.sharedCmd.size
+//            io.sdramAxi.sharedCmd.len := io.axi.sharedCmd.len
+//            io.sdramAxi.sharedCmd.id := io.axi.sharedCmd.id
+//            io.sdramAxi.sharedCmd.burst := io.axi.sharedCmd.burst
+//            io.sdramAxi.sharedCmd.write := io.axi.sharedCmd.write
+//            io.sdramAxi.sharedCmd.valid := io.axi.sharedCmd.valid
+//            io.axi.sharedCmd.ready := io.sdramAxi.sharedCmd.ready
           }
         }
       }
@@ -386,17 +425,17 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
             asconInputCmdValidReg := False
           }
 
-          dataInFifo.io.push.data.last := io.sdramAxi.readRsp.fire && io.sdramAxi.readRsp.last && decryptVerifyCounter.willOverflowIfInc
+          dataInFifo.io.push.data.last := io.sdramAxi.readRsp.fire && io.sdramAxi.readRsp.last && io.sdramAxi.readRsp.id === axiSharedCmdReg.id && decryptVerifyCounter.willOverflowIfInc
 
-          dataInFifo.io.push.valid := io.sdramAxi.readRsp.valid && (decryptVerifyCounter < 4 || decryptVerifyCounter >= 8)
+          dataInFifo.io.push.valid := io.sdramAxi.readRsp.valid && io.sdramAxi.readRsp.id === axiSharedCmdReg.id && (decryptVerifyCounter < 4 || decryptVerifyCounter >= 8)
           dataInFifo.io.push.data.fragment := io.sdramAxi.readRsp.data
 
-          tagSetAsideFifo.io.push.valid := io.sdramAxi.readRsp.valid && decryptVerifyCounter >= 4 && decryptVerifyCounter < 8
+          tagSetAsideFifo.io.push.valid := io.sdramAxi.readRsp.valid && io.sdramAxi.readRsp.id === axiSharedCmdReg.id && decryptVerifyCounter >= 4 && decryptVerifyCounter < 8
           tagSetAsideFifo.io.push.payload := io.sdramAxi.readRsp.data
 
           tagSetAsideFifo.io.pop.ready := asconFastCtrl.io.out_datastream.fire
 
-          when(io.sdramAxi.readRsp.fire) {
+          when(io.sdramAxi.readRsp.fire && io.sdramAxi.readRsp.id === axiSharedCmdReg.id) {
             when(decryptVerifyCounter.value >= 8) {
               nonceVecReg((decryptVerifyCounter.value - 8).resized) := io.sdramAxi.readRsp.data
             }
@@ -487,7 +526,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           //          io.sdramAxi.sharedCmd <> axiSharedCmd
 
           dataInFifo.io.push.payload.data.last := io.sdramAxi.readRsp.last && decryptStateReadParentNodeReg
-          dataInFifo.io.push.valid := io.sdramAxi.readRsp.valid && ((!decryptStateReadParentNodeReg && pendingWordsCounter < 4) || decryptStateReadParentNodeReg)
+          dataInFifo.io.push.valid := io.sdramAxi.readRsp.valid && io.sdramAxi.readRsp.id === axiSharedCmdReg.id && ((!decryptStateReadParentNodeReg && pendingWordsCounter < 4) || decryptStateReadParentNodeReg)
           //          when(axiSharedCmdReg.write && pendingWordsCounter.value === bytePosition(axiSharedCmdReg.addr)) {
           //            dataInFifo.io.push.payload.fragment := combineNewDataWithOriginal(io.sdramAxi.readRsp.data, dataReg, strbReg)
           //          } otherwise {
@@ -500,12 +539,12 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           dataSetAsideFifo.io.push.valid := asconFastCtrl.io.out_datastream.valid && !decryptStateDoneDataDecryptReg
           asconFastCtrl.io.out_datastream.ready := dataSetAsideFifo.io.push.ready || (decryptStateDoneDataDecryptReg && tagSetAsideFifo.io.pop.valid)
 
-          tagSetAsideFifo.io.push.valid := io.sdramAxi.readRsp.valid && pendingWordsCounter >= 4 && !decryptStateReadParentNodeReg
+          tagSetAsideFifo.io.push.valid := io.sdramAxi.readRsp.valid && io.sdramAxi.readRsp.id === axiSharedCmdReg.id && pendingWordsCounter >= 4 && !decryptStateReadParentNodeReg
           tagSetAsideFifo.io.push.payload := io.sdramAxi.readRsp.data
 
           tagSetAsideFifo.io.pop.ready := asconFastCtrl.io.out_datastream.fire && decryptStateDoneDataDecryptReg
 
-          when(dataInFifo.io.push.ready && io.sdramAxi.readRsp.fire) {
+          when(dataInFifo.io.push.ready && io.sdramAxi.readRsp.fire && io.sdramAxi.readRsp.id === axiSharedCmdReg.id) {
 
             when (pendingWordsCounter.willOverflowIfInc) {
               decryptStateReadParentNodeReg := True
@@ -751,7 +790,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
           dataSetAsideFifo.io.pop.ready := io.axi.readRsp.ready
 
-          when(io.axi.readRsp.fire && io.axi.readRsp.last) {
+          when(io.axi.readRsp.fire  && io.axi.readRsp.last) {
             goto(idleState)
           }
         }

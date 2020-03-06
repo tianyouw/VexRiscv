@@ -322,7 +322,7 @@ class Briey(config: BrieyConfig) extends Component{
     axiCrossbar.addSlaves(
       ram.io.axi       -> (0x80000000L,   onChipRamSize),
 //      sdramCtrl.io.axi -> (0x40000000L,   sdramLayout.capacity),
-      secureAccessCtrl.io.axi -> (0x40000000L,   sdramLayout.capacity),
+      secureAccessCtrl.io.axi -> (0x40000000L,   sdramLayout.capacity * 2),
       apbBridge.io.axi -> (0xF0000000L,   1 MB)
     )
 
@@ -526,7 +526,7 @@ object BrieyDe2{
                                                         onChipRamSize  = 32 kB))
       toplevel.axi.vgaCtrl.vga.ctrl.io.error.addAttribute(Verilator.public)
       toplevel.axi.vgaCtrl.vga.ctrl.io.frameStart.addAttribute(Verilator.public)
-      HexTools.initRam(toplevel.axi.ram.ram, "src/main/ressource/hex/memtestsim.hex", 0x80000000l)
+      HexTools.initRam(toplevel.axi.ram.ram, "src/main/ressource/hex/vga.hex", 0x80000000l)
       toplevel
     })
   }
