@@ -86,6 +86,8 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     }
 
   val layerIndexReg = RegInit(U(numLayers))
+  val memTreeRootNodeReg = RegInit(B(0, 128 bits))
+  val memTreeRootNodeCorruptedReg = RegInit(False)
     // Data = 8 bytes, tag = 4 bytes, nonce = 4 bytes
 //    val dataInFifo = StreamFifo(dataType = CAESARCtrlInData(axiConfig), depth = 16)
 //    val dataOutFifo = StreamFifo(dataType = CAESARCtrlOutData(axiConfig), depth = 16)
@@ -436,6 +438,13 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           tagSetAsideFifo.io.pop.ready := asconFastCtrl.io.out_datastream.fire
 
           when(io.sdramAxi.readRsp.fire && io.sdramAxi.readRsp.id === axiSharedCmdReg.id) {
+            // Additional comparison between payload and nonce we stored in reg
+            when (isParentRootOfTree() && decryptVerifyCounter < 4) {
+              when(memTreeRootNodeReg =/= 0 && io.sdramAxi.readRsp.data =/= memTreeRootNodeReg(decryptVerifyCounter * axiConfig.dataWidth, axiConfig.dataWidth bits)) {
+                memTreeRootNodeCorruptedReg := True
+              }
+            }
+
             when(decryptVerifyCounter.value >= 8) {
               nonceVecReg((decryptVerifyCounter.value - 8).resized) := io.sdramAxi.readRsp.data
             }
@@ -459,7 +468,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
             }
           }
 
-          when (tagPartsVerifiedCounter.willOverflowIfInc) {
+          when (tagPartsVerifiedCounter.willOverflowIfInc && !memTreeRootNodeCorruptedReg) {
             when(axiSharedCmdReg.write) {
               sdramAxiSharedCmdValidReg := True
               decryptVerifyCounter := 0
@@ -493,6 +502,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
           tagPartsVerifiedCounter.clear()
         }
       }
+
 
       val decryptDataState: State = new State {
         onEntry {
@@ -694,8 +704,13 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
           when(io.sdramAxi.writeData.fire) {
             when(pendingWordsCounter.value < 4) {
+              // Write into internal root node storage
+              when (isRootOfTree()) {
+                memTreeRootNodeReg(pendingWordsCounter * axiConfig.dataWidth, axiConfig.dataWidth bits) := nextNonceTagBlockFifo.io.pop.payload.fragment
+              }
               tempNonceReg( pendingWordsCounter.value(1 downto 0)) := nextNonceTagBlockFifo.io.pop.payload.fragment
             }
+
             pendingWordsCounter.increment()
           }
 
