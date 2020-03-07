@@ -290,6 +290,11 @@ class Briey(config: BrieyConfig) extends Component{
       layout = sdramLayout
     )
 
+    val asconUserCtrl = Axi4AsconCtrl(
+      axiDataWidth = 32,
+      axiAddrWidth = 32,
+      axiIdWidth = 4
+    )
 
     val core = new Area{
       val config = VexRiscvConfig(
@@ -323,6 +328,7 @@ class Briey(config: BrieyConfig) extends Component{
       ram.io.axi       -> (0x80000000L,   onChipRamSize),
 //      sdramCtrl.io.axi -> (0x40000000L,   sdramLayout.capacity),
       secureAccessCtrl.io.axi -> (0x40000000L,   sdramLayout.capacity * 2),
+      asconUserCtrl.io.axi -> (0xE0000000L, 1 MB),
       apbBridge.io.axi -> (0xF0000000L,   1 MB)
     )
 
@@ -331,7 +337,7 @@ class Briey(config: BrieyConfig) extends Component{
 //      core.dBus       -> List(ram.io.axi, sdramCtrl.io.axi, apbBridge.io.axi),
 //      vgaCtrl.io.axi  -> List(            sdramCtrl.io.axi)
       core.iBus       -> List(ram.io.axi, secureAccessCtrl.io.axi),
-      core.dBus       -> List(ram.io.axi, secureAccessCtrl.io.axi, apbBridge.io.axi),
+      core.dBus       -> List(ram.io.axi, secureAccessCtrl.io.axi, asconUserCtrl.io.axi, apbBridge.io.axi),
       vgaCtrl.io.axi  -> List(            secureAccessCtrl.io.axi)
 //      secureAccessCtrl.io.sdramAxi -> List(sdramCtrl.io.axi)
     )
@@ -377,6 +383,13 @@ class Briey(config: BrieyConfig) extends Component{
        crossbar.writeRsp              <<  ctrl.writeRsp
        crossbar.readRsp               <<  ctrl.readRsp
      })
+
+    axiCrossbar.addPipelining(asconUserCtrl.io.axi)((crossbar, ctrl) => {
+      crossbar.sharedCmd.halfPipe()  >>  ctrl.sharedCmd
+      crossbar.writeData             >> ctrl.writeData
+      crossbar.writeRsp              <<  ctrl.writeRsp
+      crossbar.readRsp               <<  ctrl.readRsp
+    })
 
     axiCrossbar.build()
 
