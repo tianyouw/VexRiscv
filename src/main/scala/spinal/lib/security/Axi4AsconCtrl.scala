@@ -66,23 +66,25 @@ case class Axi4AsconCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWidth: Int) 
   tagOut := asconCore.io.StatexDO(3) ## asconCore.io.StatexDO(4)
 
   val busyReg = RegInit(False)
-  val addrReg = Reg(UInt(axiConfig.addressWidth bits))
+  val addrReg = Reg(UInt(5 bits))
   val isWriteReg = Reg(Bool)
+  val writeDoneReg = RegInit(False)
   val idReg = Reg(UInt(axiConfig.idWidth bits))
   val asconCoreDoneReg = RegInit(False)
 
   io.axi.sharedCmd.ready := !busyReg
-  io.axi.writeData.ready := True
-  io.axi.readRsp.valid := False
-  io.axi.writeRsp.valid := False
+  io.axi.writeData.ready := io.axi.sharedCmd.fire || busyReg
 
+  io.axi.readRsp.valid := False
   io.axi.readRsp.last := busyReg && !isWriteReg // Only send 1 word
   io.axi.readRsp.setOKAY()
   io.axi.readRsp.data.assignDontCare()
   io.axi.readRsp.id := idReg
 
   io.axi.writeRsp.setOKAY()
+  io.axi.writeRsp.valid := writeDoneReg
   io.axi.writeRsp.id := idReg
+
   when (asconCore.io.CP_DonexSO) {
     resetAsconCmd()
     asconCoreDoneReg := True
@@ -90,7 +92,7 @@ case class Axi4AsconCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWidth: Int) 
 
   when (io.axi.sharedCmd.fire) {
 //    assert(io.axi.sharedCmd.len === 1)
-    addrReg := io.axi.sharedCmd.addr
+    addrReg := io.axi.sharedCmd.addr(6 downto 2)
     isWriteReg := io.axi.sharedCmd.write
     idReg := io.axi.sharedCmd.id
     busyReg := True
@@ -116,11 +118,11 @@ case class Axi4AsconCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWidth: Int) 
   }
 
   when (io.axi.writeData.fire) {
-    val addr = UInt(axiConfig.addressWidth bits)
+    val addr = UInt(5 bits)
     val wr_en = Bool
     val id = UInt(axiConfig.idWidth bits)
     when (io.axi.sharedCmd.fire) {
-      addr := io.axi.sharedCmd.addr
+      addr := io.axi.sharedCmd.addr(6 downto 2)
       wr_en := io.axi.sharedCmd.write
       id := io.axi.sharedCmd.id
     } otherwise {
@@ -137,7 +139,7 @@ case class Axi4AsconCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWidth: Int) 
       asconFinalEncryptReg := io.axi.writeData.data(4)
       asconFinalDecryptReg := io.axi.writeData.data(5)
 
-      when (asconEncryptReg || asconDecryptReg || asconFinalEncryptReg || asconFinalDecryptReg) {
+      when (io.axi.writeData.data(5 downto 2).orR) {
         dataOut := asconCore.io.IODataxDO
       }
     } elsewhen (addr >= 4 && addr < 8) {
@@ -148,13 +150,12 @@ case class Axi4AsconCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWidth: Int) 
       dataIn(addr(1 downto 0) * axiConfig.dataWidth, axiConfig.dataWidth bits) := io.axi.writeData.data
     }
 //    assert(io.axi.writeData.last)
-    io.axi.writeRsp.setOKAY()
-    io.axi.writeRsp.valid := True
-    io.axi.writeRsp.id := id
+    writeDoneReg := True
   }
 
   when ((isWriteReg && io.axi.writeRsp.fire) || (!isWriteReg && io.axi.readRsp.fire && io.axi.readRsp.last)) {
     busyReg := False
     asconCoreDoneReg := False
+    writeDoneReg := False
   }
 }

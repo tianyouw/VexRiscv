@@ -99,7 +99,7 @@ object BrieyConfig{
           //            )
         ),
         new StaticMemoryTranslatorPlugin(
-          ioRange      = _(31 downto 28) === 0xF
+          ioRange      = _(31 downto 29) === 0x7 // If top 3 bits are all 1s
         ),
         new DecoderSimplePlugin(
           catchIllegalInstruction = true
@@ -539,7 +539,7 @@ object BrieyDe2{
                                                         onChipRamSize  = 32 kB))
       toplevel.axi.vgaCtrl.vga.ctrl.io.error.addAttribute(Verilator.public)
       toplevel.axi.vgaCtrl.vga.ctrl.io.frameStart.addAttribute(Verilator.public)
-      HexTools.initRam(toplevel.axi.ram.ram, "src/main/ressource/hex/vga.hex", 0x80000000l)
+      HexTools.initRam(toplevel.axi.ram.ram, "src/main/ressource/hex/ascon_test.hex", 0x80000000l)
       toplevel
     })
   }
