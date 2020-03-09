@@ -14,8 +14,8 @@ class CustomCsrDemoPlugin extends Plugin[VexRiscv]{
     import pipeline.config._
 
     pipeline plug new Area{
-      val instructionCounter = Reg(UInt(32 bits))
-      val cycleCounter = Reg(UInt(32 bits))
+      val instructionCounter = RegInit(U(0, 32 bits))
+      val cycleCounter = RegInit(U(0, 32 bits))
 
       cycleCounter := cycleCounter + 1
       when(writeBack.arbitration.isFiring) {

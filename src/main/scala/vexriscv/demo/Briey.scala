@@ -151,6 +151,7 @@ object BrieyConfig{
             ucycleAccess   = CsrAccess.NONE
           )
         ),
+        new CustomCsrDemoPlugin,
         new YamlPlugin("cpu0.yaml")
       )
     )
@@ -539,7 +540,7 @@ object BrieyDe2{
                                                         onChipRamSize  = 32 kB))
       toplevel.axi.vgaCtrl.vga.ctrl.io.error.addAttribute(Verilator.public)
       toplevel.axi.vgaCtrl.vga.ctrl.io.frameStart.addAttribute(Verilator.public)
-      HexTools.initRam(toplevel.axi.ram.ram, "src/main/ressource/hex/riscv_tests_lbu.hex", 0x80000000l)
+      HexTools.initRam(toplevel.axi.ram.ram, "src/main/ressource/hex/ascon_test.hex", 0x80000000l)
       toplevel
     })
   }
