@@ -140,7 +140,8 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
     def combineNewDataWithOriginal(originalData: Bits, newData: Bits, strbMask: Bits): Bits = {
       assert(originalData.getWidth == newData.getWidth)
       assert(newData.getWidth == 32)
-      val outData = newData
+      val outData = Bits(32 bits)
+      outData := originalData
 
       when(strbMask(3)) {
         outData(31 downto 24) := newData(31 downto 24)
@@ -604,7 +605,7 @@ case class Axi4SharedSecurityCtrl(axiDataWidth: Int, axiAddrWidth: Int, axiIdWid
 
           // Replace byte with what we want to write
           when(pendingWordsCounter.value === bytePosition(axiSharedCmdReg.addr)) {
-            dataInFifo.io.push.data.fragment := combineNewDataWithOriginal(io.sdramAxi.readRsp.data, dataReg, strbReg)
+            dataInFifo.io.push.data.fragment := combineNewDataWithOriginal(dataSetAsideFifo.io.pop.payload.fragment, dataReg, strbReg)
             dataInFifo.io.push.data.last := dataSetAsideFifo.io.pop.last
           } otherwise {
             dataInFifo.io.push.data := dataSetAsideFifo.io.pop.payload
