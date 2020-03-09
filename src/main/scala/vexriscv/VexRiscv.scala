@@ -94,6 +94,9 @@ class VexRiscv(val config : VexRiscvConfig) extends Component with Pipeline{
   val memory    = ifGen(config.withMemoryStage)    (newStage())
   val writeBack = ifGen(config.withWriteBackStage) (newStage())
 
+  val lastLastStagePc = RegInit(U(0, 32 bits))
+  val PROFILING_numInstructions = RegInit(U(0, 32 bits))
+
   def stagesFromExecute = stages.dropWhile(_ != execute)
 
   plugins ++= config.plugins
@@ -103,6 +106,11 @@ class VexRiscv(val config : VexRiscvConfig) extends Component with Pipeline{
   val lastStagePc = CombInit(stages.last.input(config.PC)) keep() addAttribute (Verilator.public)
   val lastStageIsValid = CombInit(stages.last.arbitration.isValid) keep() addAttribute (Verilator.public)
   val lastStageIsFiring = CombInit(stages.last.arbitration.isFiring) keep() addAttribute (Verilator.public)
+
+  when (lastLastStagePc =/= lastStagePc) {
+    PROFILING_numInstructions := PROFILING_numInstructions + 1
+    lastLastStagePc := lastStagePc
+  }
 
   //Verilator perf
   decode.arbitration.removeIt.noBackendCombMerge
