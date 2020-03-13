@@ -37,6 +37,12 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
     asconFinalDecryptReg := False
   }
 
+  def rotateLFSR(): Unit = {
+    // Taken from: http://www.ijarset.com/upload/2016/february/12_IJARSET_swetha.pdf
+    nonce(126 downto 0) := nonce(127 downto 1)
+    nonce(127) := nonce(128 - 128) ^ nonce(128 - 127) ^ nonce(128 - 126) ^ nonce(128 - 121)
+  }
+
   // Settings for Ascon-128a; # of unrolled rounds is GCD of ROUNDS_A and ROUNDS_B
   val asconCore = new AsconCore(DATA_BLOCK_SIZE = 128, DATA_BUS_WIDTH = 128, ROUNDS_B = 8, UNROLLED_ROUNDS = 4)
 
@@ -46,7 +52,7 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
   def MACVER : Bits = "11"
 
   val key = B"128'x1234_5678_90AB_CDEF_DEAD_BEEF_CAFE_BABE"
-  val nonce = RegInit(B(1, 128 bits))
+  val nonce = RegInit(B(128 bits, default -> True))
   val dataIn = Reg(Bits(128 bits))
   val nonceIn = Reg(Bits(128 bits))
   val dataOut = Reg(Bits(128 bits))
@@ -222,7 +228,8 @@ class AsconFastCtrl(config : Axi4Config) extends Component {
       onExit {
         dataOutCounter.clear()
         when (mode === ENCRYPT || mode === MACGEN) {
-          nonce := B(nonce.asUInt + 1, 128 bits)
+//          nonce := B(nonce.asUInt + 1, 128 bits)
+          rotateLFSR()
         }
         doneWritingNonce := False
         doneReceivingNonce := False
